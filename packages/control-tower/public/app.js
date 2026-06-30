@@ -1762,7 +1762,7 @@ function subRowHtml(node) {
     + `<span style="display:flex;align-items:center;gap:6px;min-width:0">`
     + chevron
     + `<span class="tier-dot" style="background:${esc(tierColor(node.tier))}"></span>`
-    + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" title="${esc(node.description || node.agentId)}">${desc}</span>${kidCount}</span></td>`;
+    + `<span class="tk" title="${esc(node.description || node.agentId)}"><span class="tk-in">${desc}</span></span>${kidCount}</span></td>`;
   return `<tr data-agent-id="${esc(node.agentId)}" data-depth="${depth}" style="cursor:pointer${isMain ? ';opacity:.82' : ''}">`
     + agentCell
     + `<td class="cell-sm mono" title="${esc(node.agentType || '')}">${esc(node.agentType || '')}</td>`
@@ -1799,6 +1799,31 @@ function renderSubTable() {
     + '<th class="num">Duration</th><th class="num">Cost</th><th class="num">Tok I/O</th><th>Started</th>'
     + '</tr></thead>';
   wrap.innerHTML = `<div class="call-table-wrap"><table class="call-table" aria-label="Subagents">${colgroup}${head}<tbody>${rows.join('')}</tbody></table></div>`;
+  requestAnimationFrame(() => measureTickers(wrap));
+}
+
+// Mark truncated Agent cells (.tk) and set their marquee shift/duration so the CSS
+// :hover animation scrolls exactly the overflow distance at a constant speed.
+function measureTickers(scope) {
+  if (!scope) return;
+  const tks = [...scope.querySelectorAll('.tk')];
+  // One read pass (no interleaved writes → single reflow), then one write pass.
+  const overflows = tks.map((tk) => {
+    const inner = tk.firstElementChild;
+    return inner ? inner.scrollWidth - tk.clientWidth : 0;
+  });
+  tks.forEach((tk, i) => {
+    const over = overflows[i];
+    if (over > 2) {
+      tk.classList.add('tk-clip');
+      tk.style.setProperty('--tk-shift', `-${over}px`);
+      tk.style.setProperty('--tk-dur', `${Math.max(2.5, over / 45).toFixed(1)}s`); // ~45px/s
+    } else {
+      tk.classList.remove('tk-clip');
+      tk.style.removeProperty('--tk-shift');
+      tk.style.removeProperty('--tk-dur');
+    }
+  });
 }
 
 // Render one subagent's full detail into the shared slot: a clickable segmented timeline

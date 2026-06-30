@@ -575,6 +575,26 @@ select.input {
   color: var(--gray-900);
   margin-right: 2px;
 }
+
+/* Ticker-tape reveal for truncated cell text (Subagents Agent column). A right-edge
+   fade marks truncation; on hover the text marquee-scrolls to reveal the full string.
+   Per-cell --tk-shift / --tk-dur are measured + set in JS (measureTickers). */
+.tk { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+.tk-in { display: inline-block; white-space: nowrap; will-change: transform; }
+.tk.tk-clip {
+  -webkit-mask-image: linear-gradient(to right, #000 86%, transparent 100%);
+          mask-image: linear-gradient(to right, #000 86%, transparent 100%);
+}
+.tk.tk-clip:hover .tk-in {
+  animation: tk-scroll var(--tk-dur, 4s) linear infinite alternate;
+}
+@keyframes tk-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(var(--tk-shift, 0)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk.tk-clip:hover .tk-in { animation: none; }
+}
 .call-table .req-id {
   font-family: var(--font-mono);
   font-size: 11px;
