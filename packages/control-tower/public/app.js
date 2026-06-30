@@ -28,6 +28,19 @@ const fmtMs  = (n) => {
   return m + "m " + sec + "s";
 };
 const fmtN   = (n) => Number(n || 0).toLocaleString();
+// Compact variants for narrow table cells (full value goes in the cell's title attr).
+const fmtNshort = (n) => {
+  const v = Number(n || 0);
+  if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + 'M';
+  if (v >= 1e3) return Math.round(v / 1e3) + 'K';
+  return String(v);
+};
+const fmtUsdShort = (n) => {
+  const v = Number(n || 0);
+  if (v >= 100) return '$' + Math.round(v);
+  if (v >= 1) return '$' + v.toFixed(2);
+  return '$' + v.toFixed(3);
+};
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -1256,8 +1269,30 @@ function populateObservedFilters(runs) {
   };
   fill(obsFilterEls.branch, branches);
   fill(obsFilterEls.dir, dirs, (d) => homeAbbrev(d));
-  // Only show the bar when there's something worth filtering by.
-  if (obsFilterEls.bar) obsFilterEls.bar.hidden = !(branches.length > 1 || dirs.length > 1);
+  // Show a dropdown ONLY for a dimension that actually varies — a constant branch/dir is
+  // noise (and a single-value "Directory" select reads misleadingly like a folder picker).
+  const showDir = dirs.length > 1, showBranch = branches.length > 1;
+  const dirWrap = document.getElementById('obs-filter-dir-wrap');
+  const branchWrap = document.getElementById('obs-filter-branch-wrap');
+  if (dirWrap) dirWrap.hidden = !showDir;
+  if (branchWrap) branchWrap.hidden = !showBranch;
+  if (obsFilterEls.bar) obsFilterEls.bar.hidden = !(showDir || showBranch);
+}
+
+// Project/session context line for the Workflows view — answers "which repo/dir am I in".
+async function populateObsContext(runs) {
+  const el = document.getElementById('obs-context'); if (!el) return;
+  if (!runs || !runs.length) { el.innerHTML = ''; return; } // empty state already shows "Watching …"
+  const dirs = obsDistinct(runs.map((r) => r.cwd));
+  const branches = obsDistinct(runs.map((r) => r.gitBranch));
+  let sessionShort = '';
+  try { const h = await apiFetch('/v1/health'); const sd = h?.bridge?.sessionDir; if (sd) sessionShort = String(sd).split('/').pop().slice(0, 8); } catch { /* non-fatal */ }
+  const parts = [
+    dirs.length === 1 ? `<span title="${esc(dirs[0])}">${esc(homeAbbrev(dirs[0]))}</span>` : dirs.length > 1 ? `${dirs.length} directories` : '',
+    branches.length === 1 ? `branch ${esc(branches[0])}` : branches.length > 1 ? `${branches.length} branches` : '',
+    sessionShort ? `session ${esc(sessionShort)}` : '',
+  ].filter(Boolean);
+  el.innerHTML = parts.join('<span class="obs-sub-sep"> · </span>');
 }
 
 function applyObservedFilters() {
@@ -1330,6 +1365,7 @@ async function loadObservedList() {
     const runs = await apiFetch('/v1/observed');
     observedRuns = runs;
     populateObservedFilters(runs);
+    populateObsContext(runs);
     applyObservedFilters();
     if (!runs.length) setWatchingHint('observed-empty-hint');
   } catch (err) {
@@ -1424,7 +1460,7 @@ function buildDetailHtml(run) {
     + '<section style="margin:14px 0">'
     +   '<div style="font-size:13px;color:var(--gray-1000);margin-bottom:6px">Timeline <span style="color:var(--gray-900);font-size:11px">— each agent split into inference vs tool time, from real transcript timestamps</span></div>'
     +   `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg(calls)}</div>`
-    +   timelineLegend()
+    +   timelineLegend(calls)
     +   '<div class="muted" style="font-size:11px;margin-top:4px">Hover a segment to see what it is. Click a <strong>segment</strong> for that exact tool call / inference step (right); click an <strong>agent name</strong> for the full subagent details (below).</div>'
     + '</section>'
     + '<div class="obs-call-detail" hidden style="margin:14px 0;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:12px"></div>'
@@ -1436,7 +1472,11 @@ function buildDetailHtml(run) {
 
 // Per-call table (cache columns); rows carry data-call-idx for the inline drill-in.
 function buildCallsTable(calls) {
-  const head = '<thead><tr><th>#</th><th>Label</th><th>Tier / Model</th><th>Phase</th><th class="num">ms</th><th class="num">In</th><th class="num">Out</th><th class="num cache-col">Cache Wr</th><th class="num cache-col">Cache Rd</th><th class="num">Cost (cache)</th></tr></thead>';
+  const colgroup = '<colgroup>'
+    + '<col style="width:4%"><col style="width:18%"><col style="width:14%"><col style="width:10%"><col style="width:8%">'
+    + '<col style="width:7%"><col style="width:7%"><col style="width:9%"><col style="width:9%"><col style="width:14%">'
+    + '</colgroup>';
+  const head = colgroup + '<thead><tr><th>#</th><th>Label</th><th>Tier / Model</th><th>Phase</th><th class="num">ms</th><th class="num">In</th><th class="num">Out</th><th class="num cache-col">Cache Wr</th><th class="num cache-col">Cache Rd</th><th class="num">Cost (cache)</th></tr></thead>';
   const body = !calls.length
     ? '<tr><td colspan="10" class="muted" style="text-align:center;padding:16px">No call data available.</td></tr>'
     : calls.map((c, i) => `
@@ -1446,11 +1486,11 @@ function buildCallsTable(calls) {
         <td><span class="tier-dot" style="background:${esc(tierColor(c.tier))}"></span> <span class="mono">${esc(c.tier || '')}</span><br><span class="label-11 muted">${esc((c.model || '').replace('claude-', ''))}</span></td>
         <td class="mono">${esc(c.phase || '—')}</td>
         <td class="num mono">${fmtMs(c.ms)}</td>
-        <td class="num mono">${fmtN(c.inTok)}</td>
-        <td class="num mono">${fmtN(c.outTok)}</td>
-        <td class="num mono cache-col" title="cache_creation tokens">${fmtN(c.cacheCreationTok || 0)}</td>
-        <td class="num mono cache-col" title="cache_read tokens">${fmtN(c.cacheReadTok || 0)}</td>
-        <td class="num mono">${fmtUsd(c.costUsd)}</td>
+        <td class="num mono" title="${fmtN(c.inTok)}">${fmtNshort(c.inTok)}</td>
+        <td class="num mono" title="${fmtN(c.outTok)}">${fmtNshort(c.outTok)}</td>
+        <td class="num mono cache-col" title="cache_creation: ${fmtN(c.cacheCreationTok || 0)}">${fmtNshort(c.cacheCreationTok || 0)}</td>
+        <td class="num mono cache-col" title="cache_read: ${fmtN(c.cacheReadTok || 0)}">${fmtNshort(c.cacheReadTok || 0)}</td>
+        <td class="num mono" title="${fmtUsd(c.costUsd)}">${fmtUsdShort(c.costUsd)}</td>
       </tr>`).join('');
   return `<div class="call-table-wrap"><table class="call-table" aria-label="Observed per-call telemetry">${head}<tbody>${body}</tbody></table></div>`;
 }
@@ -1506,12 +1546,21 @@ function buildTimelineSvg(calls) {
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto">${bars}</svg>`;
 }
 
-// Legend for the segmented timeline (inference vs tool).
-function timelineLegend() {
-  const sw = (color, text) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px">`
-    + `<span style="width:11px;height:11px;border-radius:2px;background:${color};display:inline-block"></span>`
+// Legend for the timeline: the bar SEGMENTS (inference vs tool, squares) and the leading
+// per-agent MODEL-TIER dots (round). Only the tiers actually present are shown.
+function timelineLegend(calls) {
+  const sw = (color, text, round) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px">`
+    + `<span style="width:11px;height:11px;border-radius:${round ? '50%' : '2px'};background:${color};display:inline-block"></span>`
     + `<span style="font-size:11px;color:var(--gray-900)">${text}</span></span>`;
-  return `<div style="margin-top:6px">${sw(SEG_COLOR.inference, 'Inference (model)')}${sw(SEG_COLOR.tool, 'Tool execution')}</div>`;
+  let html = `<div style="margin-top:6px">${sw(SEG_COLOR.inference, 'Inference (model)')}${sw(SEG_COLOR.tool, 'Tool execution')}</div>`;
+  const order = ['opus', 'sonnet', 'haiku', 'fable'];
+  const present = Array.isArray(calls) ? [...new Set(calls.map((c) => c.tier).filter(Boolean))] : order;
+  const tiers = order.filter((t) => present.includes(t)).concat(present.filter((t) => !order.includes(t)));
+  if (tiers.length) {
+    html += `<div style="margin-top:4px"><span style="font-size:11px;color:var(--gray-700);margin-right:8px">Model tier (dot):</span>`
+      + tiers.map((t) => sw(tierColor(t), esc(t), true)).join('') + `</div>`;
+  }
+  return html;
 }
 
 // Inline drill-in for one agent call: the task it received, its output + metadata.
@@ -1675,7 +1724,12 @@ async function loadSubagentTree() {
 function renderSubHeader(data) {
   const ctx = subEls.context(); const roll = subEls.rollup(); const types = subEls.types();
   if (ctx) {
-    const bits = [data?.sessionId ? `session ${esc(String(data.sessionId).slice(0, 8))}` : '', data?.gitBranch ? esc(data.gitBranch) : '', data?.cwd ? `<span title="${esc(data.cwd)}">${esc(homeAbbrev(data.cwd))}</span>` : ''].filter(Boolean);
+    // Project context first (where am I), then branch, then session — matches the Workflows view.
+    const bits = [
+      data?.cwd ? `<span title="${esc(data.cwd)}">${esc(homeAbbrev(data.cwd))}</span>` : '',
+      data?.gitBranch ? `branch ${esc(data.gitBranch)}` : '',
+      data?.sessionId ? `session ${esc(String(data.sessionId).slice(0, 8))}` : '',
+    ].filter(Boolean);
     ctx.innerHTML = bits.join('<span class="obs-sub-sep"> · </span>');
   }
   const r = data?.rollup;
@@ -1685,7 +1739,7 @@ function renderSubHeader(data) {
   if (types) {
     const counts = r?.agentTypeCounts || {};
     types.innerHTML = Object.entries(counts).sort((a, b) => b[1] - a[1])
-      .map(([t, n]) => `<span style="display:inline-block;font-size:10.5px;color:var(--gray-900);background:var(--gray-100);border:1px solid var(--border);border-radius:10px;padding:1px 8px;margin:0 5px 4px 0">${esc(t)} <span class="mono">${n}</span></span>`).join('');
+      .map(([t, n]) => `<span class="badge badge-gray" style="margin:0 5px 4px 0">${esc(t)} <span class="mono">${n}</span></span>`).join('');
   }
 }
 
@@ -1702,22 +1756,22 @@ function subRowHtml(node) {
   const desc = esc(isMain ? 'main session' : (node.description || node.agentId));
   const status = node.orphan ? 'orphan' : (node.status || '');
   const statusColor = status === 'running' ? 'var(--blue)' : status === 'orphan' ? 'var(--amber, #f59e0b)' : status === 'missing' ? 'var(--red, #ef4444)' : status === 'session' ? 'var(--gray-700)' : 'var(--green, #10b981)';
-  const agentCell = `<td style="padding-left:${8 + indent}px;max-width:340px">`
-    + `<span style="display:inline-flex;align-items:center;gap:6px;max-width:100%">`
+  // Child count is folded into the Agent cell (its own column was dropped to fit the panel).
+  const kidCount = (hasKids && !subFlatten) ? ` <span style="color:var(--gray-700);font-size:10px;flex:0 0 auto">(${node.childCount})</span>` : '';
+  const agentCell = `<td style="padding-left:${8 + indent}px">`
+    + `<span style="display:flex;align-items:center;gap:6px;min-width:0">`
     + chevron
     + `<span class="tier-dot" style="background:${esc(tierColor(node.tier))}"></span>`
-    + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(node.description || node.agentId)}">${desc}</span></span></td>`;
+    + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" title="${esc(node.description || node.agentId)}">${desc}</span>${kidCount}</span></td>`;
   return `<tr data-agent-id="${esc(node.agentId)}" data-depth="${depth}" style="cursor:pointer${isMain ? ';opacity:.82' : ''}">`
     + agentCell
-    + `<td class="mono" style="font-size:11px">${esc(node.agentType || '')}</td>`
-    + `<td style="font-size:11px;color:${statusColor}">${esc(status)}</td>`
-    + `<td class="num mono">${hasKids ? node.childCount : ''}</td>`
-    + `<td class="mono" style="font-size:11px">${esc((node.model || '').replace('claude-', '') || node.tier || '—')}</td>`
+    + `<td class="cell-sm mono" title="${esc(node.agentType || '')}">${esc(node.agentType || '')}</td>`
+    + `<td class="cell-sm" style="color:${statusColor}">${esc(status)}</td>`
+    + `<td class="cell-sm mono" title="${esc(node.model || '')}">${esc((node.model || '').replace('claude-', '') || node.tier || '—')}</td>`
     + `<td class="num mono">${fmtMs(node.ms || 0)}</td>`
-    + `<td class="num mono">${fmtUsd(node.costUsd || 0)}</td>`
-    + `<td class="num mono">${fmtN(node.tokens?.in || 0)}/${fmtN(node.tokens?.out || 0)}</td>`
-    + `<td class="num mono" title="${esc((node.tools || []).join(', '))}">${node.toolCalls || 0}</td>`
-    + `<td class="mono" style="font-size:11px;white-space:nowrap" title="${esc(node.startedAt || '')}">${esc(fmtWhen({ startedAt: node.startedAt }))}</td>`
+    + `<td class="num mono" title="${fmtUsd(node.costUsd || 0)}">${fmtUsdShort(node.costUsd || 0)}</td>`
+    + `<td class="num mono" title="${fmtN(node.tokens?.in || 0)} in / ${fmtN(node.tokens?.out || 0)} out">${fmtNshort(node.tokens?.in || 0)}/${fmtNshort(node.tokens?.out || 0)}</td>`
+    + `<td class="cell-sm mono" title="${esc(node.startedAt || '')}">${esc(fmtWhen({ startedAt: node.startedAt }))}</td>`
     + '</tr>';
 }
 
@@ -1736,12 +1790,15 @@ function renderSubTable() {
   const rows = subFlatten
     ? allSubNodes(subForest.root).sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0)).map(subRowHtml)
     : subTreeRows(subForest.root);
+  const colgroup = '<colgroup>'
+    + '<col style="width:26%"><col style="width:10%"><col style="width:8%"><col style="width:12%">'
+    + '<col style="width:10%"><col style="width:9%"><col style="width:12%"><col style="width:13%">'
+    + '</colgroup>';
   const head = '<thead><tr>'
-    + '<th style="text-align:left">Agent</th><th style="text-align:left">Type</th><th style="text-align:left">Status</th>'
-    + '<th class="num">Children</th><th style="text-align:left">Model</th><th class="num">Duration</th>'
-    + '<th class="num">Cost</th><th class="num">Tok I/O</th><th class="num">Tools</th><th style="text-align:left">Started</th>'
+    + '<th>Agent</th><th>Type</th><th>Status</th><th>Model</th>'
+    + '<th class="num">Duration</th><th class="num">Cost</th><th class="num">Tok I/O</th><th>Started</th>'
     + '</tr></thead>';
-  wrap.innerHTML = `<div class="call-table-wrap"><table class="call-table" aria-label="Subagents">${head}<tbody>${rows.join('')}</tbody></table></div>`;
+  wrap.innerHTML = `<div class="call-table-wrap"><table class="call-table" aria-label="Subagents">${colgroup}${head}<tbody>${rows.join('')}</tbody></table></div>`;
 }
 
 // Render one subagent's full detail into the shared slot: a clickable segmented timeline
@@ -1754,7 +1811,7 @@ function renderSubagentDetail(detail) {
   tl.style.margin = '4px 0 12px';
   tl.innerHTML = '<div style="font-size:12px;color:var(--gray-900);margin-bottom:4px">Timeline — inference vs tool (click a segment for the exact step)</div>'
     + `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg([detail])}</div>`
-    + timelineLegend();
+    + timelineLegend([detail]);
   slot.insertBefore(tl, slot.children[1] || null); // after the header row
 }
 

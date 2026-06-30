@@ -327,13 +327,18 @@
       </div>
     </div>
 
-    <!-- Filter bar: narrow the list by git branch and/or working directory -->
+    <!-- Which project / session these runs come from -->
+    <div id="obs-context" class="project-context"></div>
+
+    <!-- Filter bar: narrow the LIST of runs by the dir/branch they ran in. Only the
+         dimension(s) that actually vary are shown (see populateObservedFilters). -->
     <div class="obs-filter-bar" id="obs-filter-bar" hidden>
-      <label class="obs-filter">Branch
-        <select id="obs-filter-branch" aria-label="Filter by git branch"><option value="all">All</option></select>
+      <span class="obs-filter-label">Filter runs</span>
+      <label class="obs-filter" id="obs-filter-dir-wrap">Directory
+        <select id="obs-filter-dir" aria-label="Filter runs by working directory"><option value="all">All</option></select>
       </label>
-      <label class="obs-filter">Directory
-        <select id="obs-filter-dir" aria-label="Filter by working directory"><option value="all">All</option></select>
+      <label class="obs-filter" id="obs-filter-branch-wrap">Branch
+        <select id="obs-filter-branch" aria-label="Filter runs by git branch"><option value="all">All</option></select>
       </label>
       <span class="obs-filter-count" id="obs-filter-count" aria-live="polite"></span>
     </div>
@@ -359,23 +364,21 @@
 
   <div id="tab-subagents" class="tab-panel" hidden>
   <!-- ── Subagents tree ───────────────────────────────────────────────────────── -->
-    <section class="card" style="padding:16px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
-        <div>
-          <h2 style="margin:0;font-size:16px;display:flex;align-items:center;gap:8px">
-            Subagents
-            <span class="source-badge badge-observed" title="Direct Task/Agent subagents — parent→child tree, reconstructed from transcripts">parent → child</span>
-          </h2>
-          <div id="sub-context" class="muted" style="font-size:12px;margin-top:4px"></div>
-        </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <section class="card observed-panel" id="subagents-panel" aria-labelledby="sub-heading">
+      <div class="section-header">
+        <h2 class="section-title" id="sub-heading">
+          Subagents
+          <span class="source-badge badge-observed" title="Direct Task/Agent subagents — parent→child tree, reconstructed from transcripts">parent → child</span>
+        </h2>
+        <div class="flex-center gap-8">
           <button class="btn btn-tertiary btn-sm" type="button" id="sub-expand-all">Expand all</button>
           <button class="btn btn-tertiary btn-sm" type="button" id="sub-collapse-all">Collapse all</button>
           <button class="btn btn-tertiary btn-sm" type="button" id="sub-flatten" aria-pressed="false">Flatten</button>
-          <button class="btn btn-tertiary btn-sm" type="button" id="sub-refresh" aria-label="Refresh subagents">Refresh</button>
+          <button class="btn btn-secondary btn-sm" type="button" id="sub-refresh" aria-label="Refresh subagents">Refresh</button>
         </div>
       </div>
-      <div id="sub-rollup" class="muted" style="font-size:12px;margin:8px 0 2px"></div>
+      <div id="sub-context" class="project-context"></div>
+      <div id="sub-rollup" class="label-13 muted" style="margin:6px 0 2px"></div>
       <div id="sub-types" style="margin:6px 0 2px"></div>
       <div id="subagents-table-wrap" style="margin-top:10px"></div>
       <!-- shared inline drill-in slot: a selected subagent's full per-agent trace renders here -->

@@ -523,6 +523,7 @@ select.input {
   border-collapse: collapse;
   width: 100%;
   font-size: 13px;
+  table-layout: fixed; /* columns sized by <colgroup>; cells ellipsize → no horizontal scroll */
 }
 .call-table th {
   background: var(--gray-200);
@@ -543,8 +544,37 @@ select.input {
   border-bottom: 1px solid var(--border);
   color: var(--gray-1000);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .call-table tr:nth-child(even) td { background: var(--bg-200); }
+.cell-sm { font-size: 11px; }
+
+/* Shared: a small round model-tier dot (was referenced but never defined). */
+.tier-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+
+/* "What project/repo am I looking at" context line, used by both views. */
+.project-context {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--gray-700);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 4px 0 0;
+}
+.obs-filter-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gray-900);
+  margin-right: 2px;
+}
 .call-table .req-id {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -969,6 +999,7 @@ select.input {
   font-size: 12px;
   color: var(--gray-900);
 }
+.obs-filter[hidden] { display: none; } /* let `hidden` win over display:flex */
 .obs-filter select {
   background: var(--bg-100);
   color: var(--gray-1000);
