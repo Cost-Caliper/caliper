@@ -87,6 +87,7 @@
 
   <style>
   .tabbar{display:flex;gap:4px;margin:0 0 16px;border-bottom:1px solid var(--border)}
+  .tabbar[hidden]{display:none}  /* let the `hidden` attr win over display:flex (Control tab hidden for now) */
   .tabbar-btn{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--gray-900);font:500 14px ui-sans-serif,system-ui;padding:8px 14px;cursor:pointer}
   .tabbar-btn.active{color:var(--gray-1000);border-bottom-color:var(--blue)}
   .tabbar-btn:hover{color:var(--gray-1000)}
@@ -101,8 +102,11 @@
   .editor-agent textarea:disabled{opacity:.55;cursor:not-allowed}
   .editor-dirty{border-color:var(--blue)}
   </style>
-  <div class="tabbar" role="tablist" aria-label="Dashboard mode">
-    <button class="tabbar-btn" data-tab="control" role="tab" type="button" aria-selected="false">Control (shim)</button>
+  <!-- The Control (shim) tab is hidden for now to keep the dashboard Observe-only and
+       avoid confusion. To restore it: remove `hidden` from the .tabbar below AND from the
+       data-tab="control" button. The Control panel and its logic remain intact. -->
+  <div class="tabbar" role="tablist" aria-label="Dashboard mode" hidden>
+    <button class="tabbar-btn" data-tab="control" role="tab" type="button" aria-selected="false" hidden>Control (shim)</button>
     <button class="tabbar-btn active" data-tab="observe" role="tab" type="button" aria-selected="true">Observe (native)</button>
   </div>
 
@@ -355,12 +359,11 @@
 <footer class="app-footer" role="contentinfo">
   <div class="layout">
     <p class="footer-caveat">
-      Every ms / speedup is measured by the external <strong>shim ledger</strong>
-      (a real monotonic clock), <em>not</em> the in-harness tracer — the harness
-      bans <code>Date.now()</code> / <code>Math.random()</code> / argless <code>new Date()</code>
-      for resume-safety, so timing inside a workflow is always the ledger's. Cost is
-      price-table-derived, not a live billing API. Live runs cost real cents and need
-      a key; Replay is free and deterministic (timing not meaningful in replay).
+      Runs are reconstructed from real Claude Code harness transcripts
+      (<code>wf_*.json</code> + <code>agent-*.jsonl</code>); wall-clock comes from those
+      transcript timestamps. Cost is an <em>estimate</em> derived from price tables using the
+      cache-aware convention (cache_creation &times;1.25, cache_read &times;0.10), not a live
+      billing API — invoiced cost may differ.
     </p>
     <div class="footer-meta">
       <span>Control Tower</span>
