@@ -1288,8 +1288,11 @@ async function populateObsContext(runs) {
   let sessionShort = '';
   try { const h = await apiFetch('/v1/health'); const sd = h?.bridge?.sessionDir; if (sd) sessionShort = String(sd).split('/').pop().slice(0, 8); } catch { /* non-fatal */ }
   const parts = [
-    dirs.length === 1 ? `<span title="${esc(dirs[0])}">${esc(homeAbbrev(dirs[0]))}</span>` : dirs.length > 1 ? `${dirs.length} directories` : '',
-    branches.length === 1 ? `branch ${esc(branches[0])}` : branches.length > 1 ? `${branches.length} branches` : '',
+    dirs.length === 1 ? `<span title="${esc(dirs[0])}">${esc(homeAbbrev(dirs[0]))}</span>` : dirs.length > 1 ? `${dirs.length} working dirs` : '',
+    // Only show the branch when every run shares one (useful context). When runs span
+    // several, a "N branches" summary misreads as a repo-wide claim — the Branch filter
+    // (which lists exactly those branches) is the honest disclosure instead.
+    branches.length === 1 ? `branch ${esc(branches[0])}` : '',
     sessionShort ? `session ${esc(sessionShort)}` : '',
   ].filter(Boolean);
   el.innerHTML = projectContextHtml(parts);
