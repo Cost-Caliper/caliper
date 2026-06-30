@@ -1212,13 +1212,18 @@ function segmentDetailHtml(seg, c) {
   if (isTool) {
     const calls = Array.isArray(d.calls) ? d.calls : [];
     if (!calls.length) return head + `<div class="muted" style="font-size:12px">No tool-call payload captured for this span.</div>`;
-    const body = calls.map((call, n) => ''
-      + `<div style="font-size:13px;color:var(--gray-1000);margin:${n ? 14 : 0}px 0 4px"><span class="mono">${esc(call.name || 'tool')}</span></div>`
-      + `<div style="font-size:11px;color:var(--gray-700);margin:6px 0 3px">Input</div>`
-      + `<pre class="cd-pre">${esc(call.input != null ? String(call.input) : '(no input)')}</pre>`
-      + `<div style="font-size:11px;color:var(--gray-700);margin:8px 0 3px">Result</div>`
-      + `<pre class="cd-pre cd-pre-tall">${esc(call.result != null ? String(call.result) : '(no result captured)')}</pre>`
-    ).join('');
+    const body = calls.map((call, n) => {
+      const status = call.isError
+        ? '<span style="color:var(--red,#ef4444);font-size:11px" title="The tool returned an error result (is_error)">✗ error</span>'
+        : '<span style="color:var(--green,#10b981);font-size:11px" title="The tool returned successfully">✓ ok</span>';
+      const size = call.resultLen ? `<span class="metric" title="Size of the tool's result (characters); the preview below may be truncated." style="border-bottom:none;font-size:10.5px;color:var(--gray-700)">${fmtNshort(call.resultLen)} chars</span>` : '';
+      return ''
+        + `<div style="display:flex;align-items:center;gap:8px;margin:${n ? 14 : 0}px 0 4px"><span class="mono" style="font-size:13px;color:var(--gray-1000)">${esc(call.name || 'tool')}</span> ${status}</div>`
+        + `<div style="font-size:11px;color:var(--gray-700);margin:6px 0 3px">Input</div>`
+        + `<pre class="cd-pre">${esc(call.input != null ? String(call.input) : '(no input)')}</pre>`
+        + `<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--gray-700);margin:8px 0 3px"><span>Result</span>${size}</div>`
+        + `<pre class="cd-pre cd-pre-tall">${esc(call.result != null ? String(call.result) : '(no result captured)')}</pre>`;
+    }).join('');
     return head + body;
   }
   const decided = Array.isArray(d.decided) && d.decided.length
@@ -1231,6 +1236,7 @@ function segmentDetailHtml(seg, c) {
   const chip = (label, val, title) => `<span class="metric" title="${esc(title)}" style="border-bottom:none">${label} <span class="mono" style="color:var(--gray-1000)">${esc(val)}</span></span>`;
   const chips = [
     d.outTok != null ? chip('output', fmtN(d.outTok) + ' tok', 'Tokens the model generated in this inference step.') : '',
+    d.inTok ? chip('input', fmtN(d.inTok) + ' tok', 'Uncached input tokens the model processed this step (the fresh prompt delta; cached context is counted under cache-read).') : '',
     d.cacheReadTok ? chip('cache-read', fmtNshort(d.cacheReadTok), 'Cached input tokens reused (charged at 0.10×) — context the model did not re-process.') : '',
     d.cacheCreationTok ? chip('cache-write', fmtNshort(d.cacheCreationTok), 'Tokens written to the prompt cache this step (charged at 1.25×).') : '',
     d.costUsd != null ? chip('cost', fmtUsdShort(d.costUsd), 'Reconstructed cost of just this inference step (cache-aware estimate).') : '',

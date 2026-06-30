@@ -66,7 +66,7 @@ test('buildSegments: captures per-segment detail (tool input+result paired by id
   const events = [
     { tsMs: 0, type: 'prompt' },
     { tsMs: 1000, type: 'assistant', text: 'Let me check the files.', tools: ['Bash'], toolUses: [{ id: 'tu1', name: 'Bash', input: 'ls -la' }], usage: { output_tokens: 42, input_tokens: 5, cache_read_input_tokens: 1000 }, stopReason: 'tool_use', model: 'claude-sonnet-4-6' },
-    { tsMs: 3000, type: 'tool_result', results: [{ id: 'tu1', content: 'file1\nfile2' }] },
+    { tsMs: 3000, type: 'tool_result', results: [{ id: 'tu1', content: 'file1\nfile2', isError: false, len: 11 }] },
     { tsMs: 4000, type: 'assistant', text: 'Two files found.', tools: [], toolUses: [], usage: { output_tokens: 8 }, stopReason: 'end_turn', model: 'claude-sonnet-4-6' },
   ]
   const { segments } = buildSegments(events)
@@ -82,7 +82,7 @@ test('buildSegments: captures per-segment detail (tool input+result paired by id
   assert.equal(typeof segments[0].detail.costUsd, 'number')
 
   assert.equal(segments[1].kind, 'tool')
-  assert.deepEqual(segments[1].detail.calls, [{ name: 'Bash', input: 'ls -la', result: 'file1\nfile2' }])
+  assert.deepEqual(segments[1].detail.calls, [{ name: 'Bash', input: 'ls -la', result: 'file1\nfile2', isError: false, resultLen: 11 }])
 
   assert.equal(segments[2].kind, 'inference')
   assert.equal(segments[2].detail.text, 'Two files found.')

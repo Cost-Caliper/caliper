@@ -157,7 +157,7 @@ export function buildSegments(events) {
       const calls = results.map((r) => {
         const tu = (r.id && pendingToolUses.find((u) => u.id === r.id))
           || (pendingToolUses.length === 1 ? pendingToolUses[0] : null)
-        return { name: (tu && tu.name) || pendingTools[0] || 'tool', input: (tu && tu.input) ?? null, result: r.content ?? null }
+        return { name: (tu && tu.name) || pendingTools[0] || 'tool', input: (tu && tu.input) ?? null, result: r.content ?? null, isError: !!r.isError, resultLen: r.len || 0 }
       })
       detail = { calls }
     } else {
@@ -286,7 +286,7 @@ export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
       if (!light && !isNaN(tsMs)) {
         if (isToolResult) {
           const results = msg.content.filter((b) => b && b.type === 'tool_result')
-            .map((b) => ({ id: b.tool_use_id || null, content: trunc(resultText(b.content), 4000) }))
+            .map((b) => { const txt = resultText(b.content); return { id: b.tool_use_id || null, content: trunc(txt, 4000), isError: !!b.is_error, len: txt.length }; })
           events.push({ tsMs, type: 'tool_result', results })
         } else {
           events.push({ tsMs, type: 'prompt' })
