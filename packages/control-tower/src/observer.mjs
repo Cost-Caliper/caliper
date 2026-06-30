@@ -161,7 +161,19 @@ export function buildSegments(events) {
       })
       detail = { calls }
     } else {
-      detail = { text: cur.text || '', decided: Array.isArray(cur.toolUses) ? cur.toolUses.map((u) => u.name) : [] }
+      const u = cur.usage || {}
+      detail = {
+        text: cur.text || '',
+        decided: Array.isArray(cur.toolUses) ? cur.toolUses.map((tu) => tu.name) : [],
+        outTok: u.output_tokens || 0,
+        inTok: u.input_tokens || 0,
+        cacheReadTok: u.cache_read_input_tokens || 0,
+        cacheCreationTok: u.cache_creation_input_tokens || 0,
+        stopReason: cur.stopReason || null,
+        model: cur.model || null,
+        thinking: cur.thinking || '',
+        turns: 1,
+      }
     }
 
     const last = segments[segments.length - 1]
@@ -173,6 +185,14 @@ export function buildSegments(events) {
       } else {
         last.detail.text = [last.detail.text, detail.text].filter(Boolean).join('\n\n')
         last.detail.decided = union(last.detail.decided, detail.decided)
+        last.detail.outTok += detail.outTok
+        last.detail.inTok += detail.inTok
+        last.detail.cacheReadTok += detail.cacheReadTok
+        last.detail.cacheCreationTok += detail.cacheCreationTok
+        last.detail.thinking = [last.detail.thinking, detail.thinking].filter(Boolean).join('\n\n')
+        last.detail.stopReason = detail.stopReason || last.detail.stopReason // last turn's reason
+        last.detail.model = detail.model || last.detail.model
+        last.detail.turns += 1
       }
     } else {
       segments.push({ kind, startMs, endMs, tools: kind === 'tool' ? [...pendingTools] : [], detail })
@@ -184,6 +204,15 @@ export function buildSegments(events) {
     const d = s.endMs - s.startMs
     if (s.kind === 'tool') toolMs += d
     else inferenceMs += d
+    // Per-inference-step cost from its own aggregated token usage (cache-aware).
+    if (s.kind === 'inference' && s.detail) {
+      s.detail.costUsd = +costOfUsage({
+        input_tokens: s.detail.inTok || 0,
+        output_tokens: s.detail.outTok || 0,
+        cache_creation_input_tokens: s.detail.cacheCreationTok || 0,
+        cache_read_input_tokens: s.detail.cacheReadTok || 0,
+      }, s.detail.model).toFixed(6)
+    }
   }
   return { segments, inferenceMs, toolMs }
 }
@@ -241,6 +270,9 @@ export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
     }
     return ''
   }
+  const thinkingOf = (content) => Array.isArray(content)
+    ? content.filter((b) => b && (b.type === 'thinking' || b.type === 'redacted_thinking')).map((b) => b.thinking || '').filter(Boolean).join('\n')
+    : ''
 
   for (const line of lines) {
     let entry
@@ -284,7 +316,10 @@ export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
       }
     }
     const turnText = textOf(msg.content).trim()
-    if (!light && !isNaN(tsMs)) events.push({ tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses })
+    if (!light && !isNaN(tsMs)) events.push({
+      tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses,
+      usage, stopReason: msg.stop_reason || null, model: msg.model || null, thinking: trunc(thinkingOf(msg.content), 8000),
+    })
     if (turnText) output = turnText
     const ts = entry.timestamp || null
     if (ts) {

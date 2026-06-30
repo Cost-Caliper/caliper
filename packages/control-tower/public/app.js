@@ -1224,8 +1224,29 @@ function segmentDetailHtml(seg, c) {
   const decided = Array.isArray(d.decided) && d.decided.length
     ? `<div style="font-size:12px;color:var(--gray-900);margin-bottom:8px">decided to call: <span class="mono" style="color:var(--gray-1000)">${esc(d.decided.join(', '))}</span></div>`
     : '';
-  return head + decided
-    + `<div style="font-size:11px;color:var(--gray-700);margin:0 0 3px">Model output for this step</div>`
+  // Per-step metadata chips: tokens generated, cache reuse, cost, throughput, why it
+  // stopped, model, and #turns merged into this span.
+  const durMs = (seg.endMs || 0) - (seg.startMs || 0);
+  const tps = (d.outTok && durMs > 0) ? Math.round(d.outTok / (durMs / 1000)) : null;
+  const chip = (label, val, title) => `<span class="metric" title="${esc(title)}" style="border-bottom:none">${label} <span class="mono" style="color:var(--gray-1000)">${esc(val)}</span></span>`;
+  const chips = [
+    d.outTok != null ? chip('output', fmtN(d.outTok) + ' tok', 'Tokens the model generated in this inference step.') : '',
+    d.cacheReadTok ? chip('cache-read', fmtNshort(d.cacheReadTok), 'Cached input tokens reused (charged at 0.10×) — context the model did not re-process.') : '',
+    d.cacheCreationTok ? chip('cache-write', fmtNshort(d.cacheCreationTok), 'Tokens written to the prompt cache this step (charged at 1.25×).') : '',
+    d.costUsd != null ? chip('cost', fmtUsdShort(d.costUsd), 'Reconstructed cost of just this inference step (cache-aware estimate).') : '',
+    tps != null ? chip('speed', tps + ' tok/s', 'Output tokens ÷ this step’s wall-clock — generation throughput.') : '',
+    d.stopReason ? chip('stop', d.stopReason, 'Why the model ended this turn: tool_use = it called a tool; end_turn = it finished; max_tokens = it hit the output limit.') : '',
+    d.model ? chip('model', (d.model || '').replace('claude-', ''), 'The model that ran this inference step.') : '',
+    (d.turns && d.turns > 1) ? chip('turns', String(d.turns), 'How many consecutive assistant turns were merged into this inference span.') : '',
+  ].filter(Boolean);
+  const metricsRow = chips.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-bottom:10px;font-size:11.5px;color:var(--gray-700)">${chips.join('')}</div>`
+    : '';
+  const thinking = d.thinking
+    ? `<div style="font-size:11px;color:var(--gray-700);margin:0 0 3px">Reasoning (extended thinking)</div><pre class="cd-pre" style="max-height:30vh">${esc(d.thinking)}</pre>`
+    : '';
+  return head + decided + metricsRow + thinking
+    + `<div style="font-size:11px;color:var(--gray-700);margin:8px 0 3px">Model output for this step</div>`
     + `<pre class="cd-pre cd-pre-tall">${esc(d.text || '(no text — this step only emitted a tool call)')}</pre>`;
 }
 function openCallDrawer(c, seg) {

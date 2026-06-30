@@ -65,21 +65,29 @@ test('buildSegments: parallel tool_results stay one merged tool span', () => {
 test('buildSegments: captures per-segment detail (tool input+result paired by id, inference text)', () => {
   const events = [
     { tsMs: 0, type: 'prompt' },
-    { tsMs: 1000, type: 'assistant', text: 'Let me check the files.', tools: ['Bash'], toolUses: [{ id: 'tu1', name: 'Bash', input: 'ls -la' }] },
+    { tsMs: 1000, type: 'assistant', text: 'Let me check the files.', tools: ['Bash'], toolUses: [{ id: 'tu1', name: 'Bash', input: 'ls -la' }], usage: { output_tokens: 42, input_tokens: 5, cache_read_input_tokens: 1000 }, stopReason: 'tool_use', model: 'claude-sonnet-4-6' },
     { tsMs: 3000, type: 'tool_result', results: [{ id: 'tu1', content: 'file1\nfile2' }] },
-    { tsMs: 4000, type: 'assistant', text: 'Two files found.', tools: [], toolUses: [] },
+    { tsMs: 4000, type: 'assistant', text: 'Two files found.', tools: [], toolUses: [], usage: { output_tokens: 8 }, stopReason: 'end_turn', model: 'claude-sonnet-4-6' },
   ]
   const { segments } = buildSegments(events)
 
   assert.equal(segments[0].kind, 'inference')
   assert.equal(segments[0].detail.text, 'Let me check the files.')
   assert.deepEqual(segments[0].detail.decided, ['Bash'])
+  // per-step inference metadata
+  assert.equal(segments[0].detail.outTok, 42)
+  assert.equal(segments[0].detail.cacheReadTok, 1000)
+  assert.equal(segments[0].detail.stopReason, 'tool_use')
+  assert.equal(segments[0].detail.model, 'claude-sonnet-4-6')
+  assert.equal(typeof segments[0].detail.costUsd, 'number')
 
   assert.equal(segments[1].kind, 'tool')
   assert.deepEqual(segments[1].detail.calls, [{ name: 'Bash', input: 'ls -la', result: 'file1\nfile2' }])
 
   assert.equal(segments[2].kind, 'inference')
   assert.equal(segments[2].detail.text, 'Two files found.')
+  assert.equal(segments[2].detail.outTok, 8)
+  assert.equal(segments[2].detail.stopReason, 'end_turn')
 })
 
 test('buildSegments: fewer than two events yields no segments', () => {
