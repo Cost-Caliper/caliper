@@ -579,6 +579,10 @@ select.input {
   color: var(--gray-900);
   margin-right: 2px;
 }
+/* Metrics that carry a hover explanation (stat cards + rollup items). */
+.stat-card[title] { cursor: help; }
+.metric { cursor: help; border-bottom: 1px dotted var(--gray-600); }
+.metric:hover { color: var(--gray-1000); border-bottom-color: var(--gray-900); }
 
 /* Ticker-tape reveal for truncated cell text (Subagents Agent column). A right-edge
    fade marks truncation; on hover the text marquee-scrolls to reveal the full string.

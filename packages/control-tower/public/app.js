@@ -1457,13 +1457,13 @@ function buildDetailHtml(run) {
     run.cwd ? `<span title="${esc(run.cwd)}">${esc(homeAbbrev(run.cwd))}</span>` : '',
   ].filter(Boolean).join('<span class="obs-sub-sep"> · </span>');
 
-  const stat = (n, label) => `<div class="stat-card"><div class="stat-n">${n}</div><div class="stat-label">${label}</div></div>`;
+  const stat = (n, label, desc) => `<div class="stat-card" title="${esc(desc)}"><div class="stat-n">${n}</div><div class="stat-label">${label}</div></div>`;
   const cards = '<div class="stat-cards stat-cards-sm">'
-    + stat(String(r.calls ?? calls.length ?? 0), 'Agent Calls')
-    + stat('$' + Number(r.costUsd || 0).toFixed(6), 'Cost (cache-aware)')
-    + stat(fmtN(r.inTok || 0) + ' / ' + fmtN(r.outTok || 0), 'Tok In / Out')
-    + stat(fmtMs(r.wallMs || run.durationMs || 0), 'Wall-Clock')
-    + stat((r.speedup || 1) + '×', 'Speedup')
+    + stat(String(r.calls ?? calls.length ?? 0), 'Agent Calls', 'How many agents this workflow run executed (each agent() call in the workflow).')
+    + stat('$' + Number(r.costUsd || 0).toFixed(6), 'Cost (cache-aware)', 'Total reconstructed cost across all agents. Cache-aware: cache_creation tokens ×1.25, cache_read ×0.10. An estimate from price tables, not a billed amount.')
+    + stat(fmtN(r.inTok || 0) + ' / ' + fmtN(r.outTok || 0), 'Tok In / Out', 'Total input / output tokens summed across every agent in this run.')
+    + stat(fmtMs(r.wallMs || run.durationMs || 0), 'Wall-Clock', 'Real elapsed time from the first agent starting to the last agent finishing — overlap counted once (so parallel agents do not inflate it).')
+    + stat((r.speedup || 1) + '×', 'Speedup', 'Sum of every agent’s own duration ÷ wall-clock. How much faster the run was than executing all agents one-after-another; ~1× means sequential, higher means more parallelism.')
     + '</div>';
 
   return ''
@@ -1897,7 +1897,19 @@ function renderSubHeader(data) {
   }
   const r = data?.rollup;
   if (roll) {
-    roll.innerHTML = r ? `${r.totalSubagents} subagents · ${r.rootCount} root${r.rootCount === 1 ? '' : 's'} · max depth ${r.maxDepth} · ${r.orphanCount} orphan${r.orphanCount === 1 ? '' : 's'} · ${fmtUsd(r.totalCostUsd)} · ${fmtN(r.totalTokens.in)}/${fmtN(r.totalTokens.out)} tok · span ${fmtMs(r.wallSpanMs)}` : '';
+    if (r) {
+      const m = (text, desc) => `<span class="metric" title="${esc(desc)}">${text}</span>`;
+      const sep = ' · ';
+      roll.innerHTML = [
+        m(`${r.totalSubagents} subagents`, 'Total direct subagents (spawned by the Task/Agent tool) in this session. Subagents spawned inside a Workflow are shown on the Workflows tab instead.'),
+        m(`${r.rootCount} root${r.rootCount === 1 ? '' : 's'}`, 'Subagents spawned directly by the main session (depth 1) — the top level of the tree.'),
+        m(`max depth ${r.maxDepth}`, 'Deepest nesting level reached: how many subagent→subagent spawn hops separate the furthest agent from the main session.'),
+        m(`${r.orphanCount} orphan${r.orphanCount === 1 ? '' : 's'}`, 'Subagents whose spawning Agent tool-call could not be found in any transcript; they are re-homed under the main session and flagged. 0 is normal.'),
+        m(fmtUsd(r.totalCostUsd), 'Total reconstructed cost across all subagents. Cache-aware (cache_creation ×1.25, cache_read ×0.10) — an estimate from price tables, not a billed amount.'),
+        m(`${fmtN(r.totalTokens.in)}/${fmtN(r.totalTokens.out)} tok`, 'Total input / output tokens summed across every subagent.'),
+        m(`span ${fmtMs(r.wallSpanMs)}`, 'Wall-clock span from the earliest subagent start to the latest subagent end (includes idle gaps; not the sum of durations).'),
+      ].join(sep);
+    } else { roll.innerHTML = ''; }
   }
   if (types) {
     const counts = r?.agentTypeCounts || {};
