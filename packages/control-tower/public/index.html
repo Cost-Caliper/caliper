@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control Tower — workflow-lens observability</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<!-- ── Sticky header ─────────────────────────────────────────────────────────── -->
+<header class="app-header" role="banner">
+  <div class="brand">
+    <span class="brand-name">Control Tower</span>
+    <span class="brand-sub">workflow-lens observability</span>
+  </div>
+
+  <div class="header-controls">
+    <!-- Workflow picker -->
+    <label class="sr-only" for="workflow-picker">Workflow</label>
+    <select id="workflow-picker" class="input" aria-label="Select workflow">
+      <option value="">Loading workflows…</option>
+    </select>
+
+    <!-- Live / Replay segmented toggle -->
+    <div class="seg-control" role="group" aria-label="Run mode">
+      <button class="seg-btn" id="btn-mode-live" aria-pressed="true" type="button">Live Run</button>
+      <button class="seg-btn" id="btn-mode-replay" aria-pressed="false" type="button">Replay Cassette</button>
+    </div>
+
+    <!-- Theme toggle -->
+    <button class="theme-toggle" id="btn-theme" type="button" aria-label="Toggle light/dark theme" title="Toggle theme">
+      <span id="theme-icon" aria-hidden="true">☀</span>
+    </button>
+  </div>
+</header>
+
+<!-- ── Control bar ────────────────────────────────────────────────────────────── -->
+<div class="control-bar" role="toolbar" aria-label="Run controls">
+  <div class="control-bar-inner">
+
+    <!-- Primary action -->
+    <button class="btn btn-primary" id="btn-run" type="button">Run Workflow</button>
+
+    <!-- Budget cap (live mode) -->
+    <div id="budget-wrap" aria-label="Budget cap controls">
+      <label class="label-13 muted" for="cap-input">Budget Cap (USD)</label>
+      <input class="input input-mono" id="cap-input" type="number" step="0.001" min="0" placeholder="none" aria-label="Budget cap in USD">
+    </div>
+
+    <!-- Cassette picker (replay mode, hidden by default) -->
+    <div id="cassette-wrap" aria-label="Cassette selection">
+      <label class="label-13 muted" for="cassette-picker">Cassette</label>
+      <select class="input" id="cassette-picker" aria-label="Select cassette">
+        <option value="">Loading cassettes…</option>
+      </select>
+    </div>
+
+    <!-- Toggle chips -->
+    <button class="toggle-chip" id="chip-router" type="button" role="switch" aria-pressed="false" aria-label="Enable Cost Router (route easy tasks to cheaper models)">
+      <span class="chip-dot" aria-hidden="true"></span>
+      Cost Router
+    </button>
+    <button class="toggle-chip" id="chip-gate" type="button" role="switch" aria-pressed="false" aria-label="Enable Cache and HITL Gate">
+      <span class="chip-dot" aria-hidden="true"></span>
+      Cache + HITL Gate
+    </button>
+
+    <!-- Credential warning (shown when no key and in live mode) -->
+    <span class="cred-warn hidden" id="cred-warn" role="status" aria-live="polite">
+      <span aria-hidden="true">⚠</span>
+      Set <code>ANTHROPIC_API_KEY</code> to run live · Replay is free
+    </span>
+
+    <!-- Run status label -->
+    <span id="run-status-label" class="label-13 muted hidden" aria-live="polite" aria-atomic="true"></span>
+
+    <!-- Report link (shown when done) -->
+    <a href="#" class="report-link hidden" id="report-link" target="_blank" rel="noopener noreferrer">
+      <span aria-hidden="true">↗</span> Open Report
+    </a>
+  </div>
+</div>
+
+<!-- ── Main content ───────────────────────────────────────────────────────────── -->
+<main class="main-content" id="main" role="main">
+
+  <style>
+  .tabbar{display:flex;gap:4px;margin:0 0 16px;border-bottom:1px solid var(--border)}
+  .tabbar-btn{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--gray-900);font:500 14px ui-sans-serif,system-ui;padding:8px 14px;cursor:pointer}
+  .tabbar-btn.active{color:var(--gray-1000);border-bottom-color:var(--blue)}
+  .tabbar-btn:hover{color:var(--gray-1000)}
+  </style>
+  <style>
+  .editor-agent{border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:8px}
+  .editor-agent-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .editor-agent-label{font:600 13px ui-sans-serif,system-ui;color:var(--gray-1000)}
+  .editor-agent-tag{font:500 11px ui-monospace,monospace;color:var(--gray-900);background:var(--gray-100);border:1px solid var(--border);border-radius:9999px;padding:1px 8px}
+  .editor-agent select{background:var(--bg-100);color:var(--gray-1000);border:1px solid var(--border);border-radius:6px;height:28px;padding:0 8px;font:500 12px ui-monospace,monospace}
+  .editor-agent textarea{width:100%;box-sizing:border-box;background:var(--bg-100);color:var(--gray-1000);border:1px solid var(--border);border-radius:6px;padding:8px;font:400 12px ui-monospace,monospace;line-height:1.5;resize:vertical;min-height:54px}
+  .editor-agent textarea:disabled{opacity:.55;cursor:not-allowed}
+  .editor-dirty{border-color:var(--blue)}
+  </style>
+  <div class="tabbar" role="tablist" aria-label="Dashboard mode">
+    <button class="tabbar-btn" data-tab="control" role="tab" type="button" aria-selected="false">Control (shim)</button>
+    <button class="tabbar-btn active" data-tab="observe" role="tab" type="button" aria-selected="true">Observe (native)</button>
+  </div>
+
+  <div id="tab-control" class="tab-panel" hidden>
+    <div class="muted" style="font-size:12px;margin:0 0 12px;line-height:1.5;background:var(--gray-100);border:1px solid var(--border);border-radius:6px;padding:10px">
+      <strong style="color:var(--gray-1000)">Control (shim):</strong> pick a bundled workflow, then <em>edit its agents' models and prompts below</em> and press Run Workflow — the edited version runs through the standalone <code>workflow-lens</code> runtime, outside the Claude Code harness, under <em>your</em> controls: a Budget Cap, Cost Router (incl. non-Anthropic via OpenRouter), a Cache/HITL gate, or deterministic Replay. Edits splice the original source in place, so loops are preserved; agents whose prompts are built at runtime are shown read-only. This turns a Claude-authored workflow file into an editable, portable agent executor.
+    </div>
+
+  <!-- Error banner -->
+  <div class="error-banner" id="error-banner" role="alert" aria-live="assertive">
+    <span class="error-icon" aria-hidden="true">✕</span>
+    <div class="error-content">
+      <div class="error-title" id="error-title">Error</div>
+      <div class="error-detail" id="error-detail"></div>
+      <div class="error-next" id="error-next"></div>
+    </div>
+  </div>
+
+  <!-- Governor banner -->
+  <div class="governor-banner" id="governor-banner" role="alert" aria-live="assertive">
+    <span class="governor-icon" aria-hidden="true">✕</span>
+    <span id="governor-msg">Over Budget</span>
+    <button class="btn btn-secondary btn-sm" id="btn-raise-cap" type="button">Raise Cap &amp; Re-run</button>
+  </div>
+
+  <!-- Edit Workflow panel (Control tab) -->
+  <section class="card" id="editor-panel" hidden aria-labelledby="editor-heading" style="margin-bottom:16px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px">
+      <h2 id="editor-heading" class="section-title">Edit Workflow</h2>
+      <span class="muted label-13" id="editor-note"></span>
+    </div>
+    <div id="editor-agents"></div>
+  </section>
+
+  <!-- Stat cards -->
+  <section aria-labelledby="stats-heading">
+    <h2 class="sr-only" id="stats-heading">Run Statistics</h2>
+    <div class="stat-cards" id="stat-cards">
+      <div class="stat-card" id="stat-calls">
+        <div class="stat-n muted" id="stat-calls-n">—</div>
+        <div class="stat-label">Agent Calls</div>
+      </div>
+      <div class="stat-card" id="stat-cost">
+        <div class="stat-n muted" id="stat-cost-n">—</div>
+        <div class="stat-label">Total Cost</div>
+      </div>
+      <div class="stat-card" id="stat-tok">
+        <div class="stat-n muted" id="stat-tok-n">—</div>
+        <div class="stat-label">Tok In / Out</div>
+      </div>
+      <div class="stat-card" id="stat-wall">
+        <div class="stat-n muted" id="stat-wall-n">—</div>
+        <div class="stat-label">Wall-Clock</div>
+      </div>
+      <div class="stat-card" id="stat-sum">
+        <div class="stat-n muted" id="stat-sum-n">—</div>
+        <div class="stat-label">Naive Sum</div>
+      </div>
+      <div class="stat-card savings" id="stat-speedup">
+        <div class="stat-n muted" id="stat-speedup-n">—</div>
+        <div class="stat-label">Concurrency Speedup</div>
+        <div class="stat-badge" id="stat-saved-badge" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Graph panel -->
+  <section class="card graph-panel" aria-labelledby="graph-heading">
+    <div class="section-header">
+      <h2 class="section-title" id="graph-heading">Workflow Graph</h2>
+      <div class="lint-popover" id="lint-badge-wrap" aria-label="Lint status">
+        <span class="badge badge-gray" id="lint-badge">Select a workflow</span>
+        <ul class="lint-findings-list" id="lint-findings" role="tooltip" aria-label="Lint findings"></ul>
+      </div>
+    </div>
+    <div class="graph-svg-wrap" id="graph-svg-wrap">
+      <div class="graph-empty">Select a workflow to view its graph.</div>
+    </div>
+  </section>
+
+  <!-- Timeline panel -->
+  <section class="card timeline-panel" aria-labelledby="timeline-heading">
+    <div class="section-header">
+      <h2 class="section-title" id="timeline-heading">Timeline</h2>
+      <div class="timeline-legend" aria-label="Tier color legend">
+        <span class="legend-item"><span class="legend-swatch" style="background:#3b8e6e" aria-hidden="true"></span>haiku</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#9c6b2e" aria-hidden="true"></span>sonnet</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#a33" aria-hidden="true"></span>opus</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:var(--red)" aria-hidden="true"></span>error</span>
+      </div>
+    </div>
+    <div class="timeline-canvas" id="timeline-canvas">
+      <div class="empty-state">
+        <p class="muted">Timeline appears when a run starts.</p>
+      </div>
+    </div>
+
+    <!-- Run log -->
+    <div class="run-log hidden" id="run-log" aria-live="polite" aria-label="Run log"></div>
+  </section>
+
+  <!-- Per-call table -->
+  <section class="card" aria-labelledby="calls-heading">
+    <div class="section-header">
+      <h2 class="section-title" id="calls-heading">Per-Call Detail</h2>
+    </div>
+
+    <!-- Phase rollup -->
+    <div class="phase-table-wrap" id="phase-table-wrap" hidden>
+      <table class="phase-table" aria-label="Per-phase rollup">
+        <thead>
+          <tr>
+            <th>Phase</th>
+            <th class="num">Calls</th>
+            <th class="num">Tok In</th>
+            <th class="num">Tok Out</th>
+            <th class="num">Cost</th>
+            <th class="num">Sum ms</th>
+            <th class="num">Wall ms</th>
+          </tr>
+        </thead>
+        <tbody id="phase-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- Calls table -->
+    <div class="call-table-wrap">
+      <table class="call-table" aria-label="Per-call telemetry">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Label</th>
+            <th>Tier</th>
+            <th>Phase</th>
+            <th class="num">ms</th>
+            <th class="num">In</th>
+            <th class="num">Out</th>
+            <th class="num">Cost</th>
+            <th>Request Id</th>
+            <th>Flags</th>
+          </tr>
+        </thead>
+        <tbody id="calls-tbody">
+          <tr>
+            <td colspan="10" class="muted" style="text-align:center;padding:24px">
+              No calls yet — run or replay a workflow.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Optimization card -->
+  <div class="optimize-card" id="optimize-card" aria-live="polite">
+    <div class="optimize-header">
+      <div class="optimize-title">
+        <span aria-hidden="true">◆</span>
+        Optimization Suggestion
+      </div>
+      <div class="optimize-actions">
+        <button class="btn btn-amber" id="btn-apply-opt" type="button">Apply Optimization</button>
+        <button class="btn btn-tertiary btn-sm" id="btn-dismiss-opt" type="button">Dismiss</button>
+      </div>
+    </div>
+    <div class="optimize-body" id="optimize-body">Loading suggestion…</div>
+
+    <!-- Before/after delta (shown after apply) -->
+    <div class="delta-card" id="delta-card">
+      <div class="delta-item">
+        <div class="delta-label">Cost</div>
+        <div class="delta-before" id="delta-cost-before"></div>
+        <div class="delta-after" id="delta-cost-after"></div>
+        <div class="delta-saved" id="delta-cost-saved"></div>
+      </div>
+      <div class="delta-item">
+        <div class="delta-label">Wall-Clock</div>
+        <div class="delta-before" id="delta-wall-before"></div>
+        <div class="delta-after" id="delta-wall-after"></div>
+        <div class="delta-saved" id="delta-wall-saved"></div>
+      </div>
+      <div class="delta-item">
+        <div class="delta-label">Speedup</div>
+        <div class="delta-before" id="delta-speedup-before"></div>
+        <div class="delta-after" id="delta-speedup-after"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Learnings panel -->
+  <div class="learnings-panel" id="learnings-panel">
+    <div class="section-header">
+      <h2 class="section-title">Learnings</h2>
+      <div class="flex-center gap-8">
+        <div class="distilling-indicator" id="distilling-indicator">
+          <div class="spinner" aria-hidden="true"></div>
+          Distilling…
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-write-learnings" type="button">Write Learnings</button>
+        <a href="#" class="btn btn-tertiary btn-sm hidden" id="learnings-dl-link" download="learnings.md">Download .md</a>
+      </div>
+    </div>
+    <ul class="learnings-list" id="learnings-list" aria-live="polite" aria-label="Distilled learnings"></ul>
+  </div>
+
+  </div><!-- /tab-control -->
+
+  <div id="tab-observe" class="tab-panel">
+  <!-- ── Observed Runs panel ──────────────────────────────────────────────────── -->
+  <section class="card observed-panel" id="observed-panel" aria-labelledby="observed-heading">
+    <div class="section-header">
+      <h2 class="section-title" id="observed-heading">
+        Observed Runs
+        <span class="source-badge badge-observed" id="observed-mode-badge" title="Native harness runs — reconstructed from real transcript artifacts">Observed (native)</span>
+      </h2>
+      <div class="flex-center gap-8">
+        <button class="btn btn-secondary btn-sm" id="btn-refresh-observed" type="button" aria-label="Refresh observed runs list">Refresh</button>
+      </div>
+    </div>
+
+    <!-- Filter bar: narrow the list by git branch and/or working directory -->
+    <div class="obs-filter-bar" id="obs-filter-bar" hidden>
+      <label class="obs-filter">Branch
+        <select id="obs-filter-branch" aria-label="Filter by git branch"><option value="all">All</option></select>
+      </label>
+      <label class="obs-filter">Directory
+        <select id="obs-filter-dir" aria-label="Filter by working directory"><option value="all">All</option></select>
+      </label>
+      <span class="obs-filter-count" id="obs-filter-count" aria-live="polite"></span>
+    </div>
+
+    <!-- Empty state -->
+    <div id="observed-empty" class="empty-state observed-empty-state" aria-live="polite">
+      <p class="muted">Run a workflow in this session to observe it here.</p>
+      <p class="label-13 muted">The bridge tails <code>wf_*.json</code> and <code>agent-*.jsonl</code> from the harness session dir.<br>
+         Set <code>WFLENS_SESSION_DIR</code> if the list is empty.</p>
+    </div>
+
+    <!-- Run list -->
+    <div id="observed-list" class="observed-list" role="list" aria-label="Observed runs"></div>
+
+    <!-- Per-run detail (stat cards, timeline, per-call table, drill-in) renders
+         INLINE as an accordion into each row's .obs-run-detail — built in app.js. -->
+  </section>
+  </div><!-- /tab-observe -->
+
+</main>
+
+<!-- ── Footer / About ─────────────────────────────────────────────────────────── -->
+<footer class="app-footer" role="contentinfo">
+  <div class="layout">
+    <p class="footer-caveat">
+      Every ms / speedup is measured by the external <strong>shim ledger</strong>
+      (a real monotonic clock), <em>not</em> the in-harness tracer — the harness
+      bans <code>Date.now()</code> / <code>Math.random()</code> / argless <code>new Date()</code>
+      for resume-safety, so timing inside a workflow is always the ledger's. Cost is
+      price-table-derived, not a live billing API. Live runs cost real cents and need
+      a key; Replay is free and deterministic (timing not meaningful in replay).
+    </p>
+    <div class="footer-meta">
+      <span>Control Tower</span>
+      <span class="muted"> · workflow-lens</span>
+    </div>
+  </div>
+</footer>
+
+<script src="/app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+{
+  "workflow": "claude-code-instrumented",
+  "runId": "req_011CcLruGjEdKoKzTVK6RdyX",
+  "generatedFrom": {
+    "traceRecords": 0,
+    "ledgerCalls": 1,
+    "hasLedger": true,
+    "hasGateStats": false
+  },
+  "costHotspots": [
+    {
+      "label": "greeter",
+      "model": "claude-haiku-4-5-20251001",
+      "phase": null,
+      "costUsd": 0.000035,
+      "cites": [
+        "req_011CcLruGjEdKoKzTVK6RdyX",
+        "0.000035"
+      ]
+    }
+  ],
+  "slowestAgents": [
+    {
+      "label": "greeter",
+      "model": "claude-haiku-4-5-20251001",
+      "ms": 761.6,
+      "cites": [
+        "req_011CcLruGjEdKoKzTVK6RdyX",
+        "761.6"
+      ]
+    }
+  ],
+  "failures": [],
+  "patterns": [
+    {
+      "statement": "Single unphased call dominates run; no parallelism detected (concurrencySavingMs: -0.1, speedup: 1).",
+      "cites": [
+        "concurrencySavingMs: -0.1",
+        "speedup: 1",
+        "phase: null"
+      ]
+    },
+    {
+      "statement": "Wall time matches sum of call durations (761.7 ms wall vs 761.6 ms summed), indicating sequential execution.",
+      "cites": [
+        "wallMs: 761.7",
+        "sumMs: 761.6"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "action": "Baseline cost/latency established. For future runs, compare against 0.000035 USD per single haiku call and 761.6 ms latency.",
+      "rationale": "This is a minimal single-call workflow with no trace instrumentation (0 traceLines). Use as a cost and latency floor for the greeter task.",
+      "cites": [
+        "0.000035",
+        "761.6",
+        "traceRecords: 0"
+      ]
+    }
+  ],
+  "notes": "No trace records captured; ledger-only visibility. Single call, no phases, no failures. Wall clock dominated by call latency (761.6 ms from haiku model end-to-end). No concurrency overhead or savings.",
+  "evidenceNote": "single run (n=1); facts are this run only, not a trend",
+  "_distillerRequestId": "req_011CcLrx91ydpc96dwuiELJr",
+  "_distillerModel": "haiku"
+}

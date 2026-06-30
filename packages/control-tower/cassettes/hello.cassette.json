@@ -1,0 +1,21 @@
+{
+  "_header": {
+    "metaName": "fixture-hello",
+    "recordedAt": "2026-06-23T18:36:01.347Z",
+    "calls": 1,
+    "dupCount": 0
+  },
+  "entries": {
+    "928b6911b2bdd712dd0c0a9bb16d6f29": {
+      "text": "ok",
+      "usage": {
+        "inTok": 15,
+        "outTok": 4
+      },
+      "ms": 810.7,
+      "requestId": "req_011CcLg6XJrgsmgDxMeTSREn",
+      "tier": "haiku",
+      "model": "claude-haiku-4-5-20251001"
+    }
+  }
+}

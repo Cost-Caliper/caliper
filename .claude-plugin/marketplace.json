@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "workflow-lens",
+  "description": "Claude Code workflow observability — visualize, instrument, and budget Workflow runs.",
+  "owner": {
+    "name": "Dennison Bertram",
+    "url": "https://github.com/dennisonbertram"
+  },
+  "plugins": [
+    {
+      "name": "workflow-lens",
+      "description": "Visualize, instrument, budget, replay, and estimate Claude Code Workflow runs (workflow-lens CLI + Control Tower dashboard).",
+      "category": "development",
+      "source": "./"
+    }
+  ]
+}

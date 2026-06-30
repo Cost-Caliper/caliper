@@ -1,0 +1,36 @@
+{
+  "name": "workflow-lens",
+  "version": "0.1.0",
+  "description": "Run, instrument, visualize, route, budget, record/replay, estimate, and distill Claude Code workflow files (the single-file `export const meta` + injected-globals format).",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "bin": {
+    "workflow-lens": "bin/workflow-lens.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./shim": "./src/shim.mjs",
+    "./ast": "./src/ast.mjs",
+    "./ledger": "./src/ledger.mjs",
+    "./gate": "./src/gate.mjs",
+    "./render": "./src/render.mjs",
+    "./inject": "./src/inject.mjs",
+    "./watch": "./src/watch.mjs",
+    "./codegen": "./src/codegen.mjs",
+    "./governor": "./src/governor.mjs",
+    "./router": "./src/router.mjs",
+    "./cassette": "./src/cassette.mjs",
+    "./estimate": "./src/estimate.mjs",
+    "./learnings": "./src/learnings.mjs"
+  },
+  "files": ["src", "bin", "examples", "README.md"],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "demo": "node examples/demo.mjs",
+    "lint:self": "node bin/workflow-lens.mjs lint examples/fanout.workflow.js"
+  },
+  "dependencies": {
+    "acorn": "^8.17.0"
+  }
+}

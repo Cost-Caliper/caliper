@@ -1,0 +1,22 @@
+{
+  "name": "control-tower",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Geist-styled dark web dashboard over workflow-lens: run/replay Claude Code workflows live, stream telemetry, trip the budget governor, apply cost optimizations, and distill durable learnings.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "bin": { "control-tower": "server.mjs" },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "postinstall": "node scripts/copy-fonts.mjs",
+    "fonts": "node scripts/copy-fonts.mjs",
+    "test": "node --test test/*.test.mjs",
+    "smoke": "node server.mjs & sleep 1; curl -fsS http://localhost:8787/v1/health > /dev/null && echo OK; kill %1"
+  },
+  "dependencies": {
+    "workflow-lens": "file:../workflow-lens",
+    "geist": "^1.7.2"
+  }
+}
