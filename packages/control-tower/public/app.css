@@ -570,9 +570,10 @@ select.input {
   margin: 4px 0 0;
 }
 /* Secondary context (branches · session) stays out of the way until you hover the line. */
-.project-context .ctx-more { opacity: 0; transition: opacity .15s ease; }
-.project-context:hover .ctx-more, .project-context:focus-within .ctx-more { opacity: 1; }
-@media (hover: none) { .project-context .ctx-more { opacity: 1; } }
+.ctx-more { opacity: 0; transition: opacity .15s ease; }
+.project-context:hover .ctx-more, .project-context:focus-within .ctx-more,
+.obs-run-row:hover .ctx-more, .obs-run-row:focus-visible .ctx-more { opacity: 1; }
+@media (hover: none) { .ctx-more { opacity: 1; } }
 .obs-filter-label {
   font-size: 12px;
   font-weight: 500;
@@ -582,6 +583,29 @@ select.input {
 /* Clickable "view workflow source" affordance in a run's detail. */
 .wf-source-link { cursor: pointer; color: var(--blue); }
 .wf-source-link:hover { text-decoration: underline; }
+
+/* Syntax-highlighted code block (dependency-free highlighter; see highlightJs). */
+.code-block {
+  background: var(--bg-200);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0;
+  max-height: 62vh;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  tab-size: 2;
+  color: var(--gray-1000);
+  white-space: pre;
+}
+.code-block code { font: inherit; }
+.hl-kw      { color: #c586c0; }                 /* keywords */
+.hl-string  { color: #98c379; }                 /* strings + template literals */
+.hl-comment { color: var(--gray-600); font-style: italic; }
+.hl-num     { color: #d19a66; }                 /* numbers */
+.hl-type    { color: #e5c07b; }                 /* Capitalized identifiers (types/classes) */
 
 /* Metrics that carry a hover explanation (stat cards + rollup items). */
 .stat-card[title] { cursor: help; }
@@ -1096,23 +1120,25 @@ select.input {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;     /* name + date on ONE line */
+  align-items: baseline;
+  gap: 8px;
 }
 .obs-run-name {
   font-size: 13px;
   font-weight: 600;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: nowrap;     /* name truncates first when space is tight */
 }
 .obs-run-sub {
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--gray-700);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;     /* no clip: the hover-revealed branch/dir must show in full */
 }
 .obs-sub-sep { color: var(--gray-500); }
 

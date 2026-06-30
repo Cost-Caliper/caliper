@@ -1257,6 +1257,30 @@ function segmentDetailHtml(seg, c) {
     + `<div style="font-size:11px;color:var(--gray-700);margin:8px 0 3px">Model output for this step</div>`
     + `<pre class="cd-pre cd-pre-tall">${esc(d.text || '(no text — this step only emitted a tool call)')}</pre>`;
 }
+// Dependency-free JS syntax highlighter (no CDN/framework — fits the dashboard's ethos).
+// One master regex tokenizes the source so keywords inside strings/comments aren't touched;
+// every emitted character is escaped, so the result is safe to inject as HTML.
+const JS_KEYWORDS = new Set(('const let var function return if else for while await async export import ' +
+  'default from new class extends of in typeof instanceof try catch finally throw switch case break ' +
+  'continue do yield this super null true false undefined void delete static get set').split(' '));
+function highlightJs(src) {
+  const re = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(`(?:\\[\s\S]|[^`\\])*`)|("(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*')|(\b0x[0-9a-fA-F]+\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|([A-Za-z_$][\w$]*)|(\s+)|([\s\S])/g;
+  let out = '', m;
+  while ((m = re.exec(src)) !== null) {
+    if (m[1]) out += `<span class="hl-comment">${esc(m[1])}</span>`;
+    else if (m[2] || m[3]) out += `<span class="hl-string">${esc(m[2] || m[3])}</span>`;
+    else if (m[4]) out += `<span class="hl-num">${esc(m[4])}</span>`;
+    else if (m[5]) {
+      const id = m[5];
+      out += JS_KEYWORDS.has(id) ? `<span class="hl-kw">${esc(id)}</span>`
+        : /^[A-Z]/.test(id) ? `<span class="hl-type">${esc(id)}</span>`
+        : esc(id);
+    } else if (m[6]) out += m[6];          // whitespace (safe verbatim)
+    else out += esc(m[7]);                 // punctuation / other
+  }
+  return out;
+}
+
 // Open the workflow source for a run in the drawer: its name, on-disk path, and the
 // exact script the harness executed. (Browsers can't open a local file directly, so we
 // show the source + the path you can open in your editor.)
@@ -1275,11 +1299,14 @@ async function openScriptDrawer(runId) {
       + `<pre class="cd-pre" style="white-space:pre-wrap;word-break:break-all">${esc(d.path)}</pre>`
       + `<div style="margin:4px 0 10px"><a href="vscode://file${esc(d.path)}" style="font-size:11px;color:var(--blue)">Open in VS Code ↗</a></div>`
     : '<div class="muted" style="font-size:11px;margin-bottom:8px">Inline workflow — no saved file path.</div>';
+  const sourceHtml = d.source
+    ? `<pre class="code-block"><code>${highlightJs(d.source)}</code></pre>`
+    : '<pre class="code-block"><code>(source not recorded for this run)</code></pre>';
   body.innerHTML =
     `<div style="font-size:15px;color:var(--gray-1000);margin-bottom:8px"><span class="mono">${esc(d.name || runId)}</span></div>`
     + pathBlock
     + `<div style="font-size:11px;color:var(--gray-700);margin:6px 0 3px">Source <span class="muted">(${(d.source || '').length.toLocaleString()} chars)</span></div>`
-    + `<pre class="cd-pre" style="max-height:62vh;font-size:10.5px">${esc(d.source || '(source not recorded for this run)')}</pre>`;
+    + sourceHtml;
 }
 function openCallDrawer(c, seg) {
   const dr = document.getElementById('cd-drawer'); const scrim = document.getElementById('cd-scrim');
@@ -1404,12 +1431,13 @@ function renderObservedList(runs) {
   }
   observedEls.empty.style.display = 'none';
   observedEls.list.innerHTML = runs.map((r) => {
-    const sub = [
-      esc(fmtWhen(r)),
+    // Name + date/time stay on one line; branch + (full) dir reveal on row hover.
+    const sep = '<span class="obs-sub-sep"> · </span>';
+    const branchDir = [
       r.gitBranch ? esc(r.gitBranch) : '',
-      // Full working-directory path (home-abbreviated, untruncated); absolute path on hover.
       r.cwd ? `<span title="${esc(r.cwd)}">${esc(homeAbbrev(r.cwd))}</span>` : '',
-    ].filter(Boolean).join('<span class="obs-sub-sep"> · </span>');
+    ].filter(Boolean).join(sep);
+    const sub = esc(fmtWhen(r)) + (branchDir ? `<span class="ctx-more">${sep}${branchDir}</span>` : '');
     const nameTitle = r.scriptPath ? `Workflow file: ${r.scriptPath}` : (r.name || r.runId);
     return `
     <div class="obs-run-item" data-run-id="${esc(r.runId)}">
