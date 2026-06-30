@@ -30,6 +30,7 @@ import { extractEditableAgents, applyEdits } from './src/editor.mjs'
 import { deriveOptimizations } from './src/optimize.mjs'
 import { distillLearnings, groundingCheck } from '../workflow-lens/src/learnings.mjs'
 import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns } from './src/observer.mjs'
+import { scanSubagentTree, reconstructSubagent } from './src/subagents.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.PORT || '8787', 10)
@@ -748,6 +749,25 @@ async function handle(req, res) {
       }
     }
     jsonOk(res, list)
+    return
+  }
+
+  // ── GET /v1/subagents/:id — full detail for one subagent (lazy) ───────────────
+  {
+    const params = matchRoute(method, urlPath, 'GET /v1/subagents/:id')
+    if (params) {
+      if (!SESS) { jsonErr(res, 'NOT_CONFIGURED', 'WFLENS_SESSION_DIR is not set — cannot observe subagents', 503); return }
+      const detail = reconstructSubagent(SESS, params.id)
+      if (!detail) { jsonErr(res, 'NOT_FOUND', `Subagent "${params.id}" not found`, 404); return }
+      jsonOk(res, detail)
+      return
+    }
+  }
+
+  // ── GET /v1/subagents — direct-subagent forest (parent→child tree) for the session ──
+  if (method === 'GET' && urlPath === '/v1/subagents') {
+    if (!SESS) { jsonOk(res, { sessionId: null, root: null, rollup: null }); return }
+    jsonOk(res, scanSubagentTree(SESS))
     return
   }
 

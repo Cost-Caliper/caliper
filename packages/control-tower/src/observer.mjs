@@ -189,9 +189,17 @@ export function buildSegments(events) {
 }
 
 // ── Parse agent-<id>.jsonl ────────────────────────────────────────────────────
-// Sums usage across all assistant turns in the transcript.
-// Returns {model, totalUsage, firstTimestamp, lastTimestamp}
-function parseAgentTranscript(transcriptPath) {
+// Sums usage across all assistant turns in the transcript and (in full mode) builds
+// the inference-vs-tool segment timeline with per-step detail.
+//
+// opts.light=true → skip the heavy per-segment detail (event payloads, buildSegments,
+// task/output). Used by the Subagents tree scan, which needs only totals + agentCalls
+// + timestamps for MANY transcripts; full detail is fetched lazily per agent.
+//
+// Always returns `agentCalls` — [{id, description, model}] for every `Agent` tool_use
+// this transcript emitted — so the Subagents view can resolve parent→child by matching
+// a child's meta.toolUseId to the owner transcript. (reconstructRun ignores this field.)
+export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
   if (!existsSync(transcriptPath)) return null
   let lines
   try { lines = readFileSync(transcriptPath, 'utf8').split('\n').filter(Boolean) } catch { return null }
@@ -206,7 +214,8 @@ function parseAgentTranscript(transcriptPath) {
   let assistantTurns = 0
   let toolCalls = 0
   const tools = new Set()
-  const events = []  // {tsMs, type} for inference-vs-tool segmentation
+  const agentCalls = []  // [{id, description, model}] — `Agent` tool_use spawns (parent linkage)
+  const events = []  // {tsMs, type} for inference-vs-tool segmentation (full mode only)
   const totalUsage = {
     input_tokens: 0,
     output_tokens: 0,
@@ -242,7 +251,7 @@ function parseAgentTranscript(transcriptPath) {
     const tsMs = entry.timestamp ? new Date(entry.timestamp).getTime() : NaN
     if (entry.type === 'user') {
       const isToolResult = Array.isArray(msg.content) && msg.content.some((b) => b && b.type === 'tool_result')
-      if (!isNaN(tsMs)) {
+      if (!light && !isNaN(tsMs)) {
         if (isToolResult) {
           const results = msg.content.filter((b) => b && b.type === 'tool_result')
             .map((b) => ({ id: b.tool_use_id || null, content: trunc(resultText(b.content), 4000) }))
@@ -263,16 +272,19 @@ function parseAgentTranscript(transcriptPath) {
     totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0
     totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0
     const turnTools = []    // tool names this assistant turn requested (labels the tool span)
-    const turnToolUses = [] // [{id,name,input}] for pairing with tool_results
+    const turnToolUses = [] // [{id,name,input}] for pairing with tool_results (full mode)
     if (Array.isArray(msg.content)) {
       for (const b of msg.content) if (b && b.type === 'tool_use') {
         toolCalls++
         if (b.name) { tools.add(b.name); turnTools.push(b.name) }
-        turnToolUses.push({ id: b.id || null, name: b.name || 'tool', input: trunc(stringifyInput(b.input), 4000) })
+        if (b.name === 'Agent' && b.id) {
+          agentCalls.push({ id: b.id, description: (b.input && b.input.description) || null, model: (b.input && b.input.model) || null })
+        }
+        if (!light) turnToolUses.push({ id: b.id || null, name: b.name || 'tool', input: trunc(stringifyInput(b.input), 4000) })
       }
     }
     const turnText = textOf(msg.content).trim()
-    if (!isNaN(tsMs)) events.push({ tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses })
+    if (!light && !isNaN(tsMs)) events.push({ tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses })
     if (turnText) output = turnText
     const ts = entry.timestamp || null
     if (ts) {
@@ -281,12 +293,23 @@ function parseAgentTranscript(transcriptPath) {
     }
   }
 
+  if (light) {
+    // Light timing derives from assistant-turn timestamps only (tool_result spans are
+    // intentionally omitted), so a transcript with no assistant turns reports ms=0.
+    return {
+      model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
+      task: null, output: null,
+      assistantTurns, toolCalls, tools: [...tools], agentCalls,
+      segments: [], inferenceMs: 0, toolMs: 0,
+    }
+  }
+
   events.sort((a, b) => a.tsMs - b.tsMs)
   const { segments, inferenceMs, toolMs } = buildSegments(events)
   return {
     model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
     task: trunc(task, 8000), output: trunc(output, 20000),
-    assistantTurns, toolCalls, tools: [...tools],
+    assistantTurns, toolCalls, tools: [...tools], agentCalls,
     segments, inferenceMs, toolMs,
   }
 }

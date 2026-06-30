@@ -102,12 +102,12 @@
   .editor-agent textarea:disabled{opacity:.55;cursor:not-allowed}
   .editor-dirty{border-color:var(--blue)}
   </style>
-  <!-- The Control (shim) tab is hidden for now to keep the dashboard Observe-only and
-       avoid confusion. To restore it: remove `hidden` from the .tabbar below AND from the
-       data-tab="control" button. The Control panel and its logic remain intact. -->
-  <div class="tabbar" role="tablist" aria-label="Dashboard mode" hidden>
+  <!-- The Control (shim) tab is hidden for now (kept in DOM, just `hidden`). Observe and
+       Subagents are the two visible views. To restore Control: remove `hidden` from its button. -->
+  <div class="tabbar" role="tablist" aria-label="Dashboard mode">
     <button class="tabbar-btn" data-tab="control" role="tab" type="button" aria-selected="false" hidden>Control (shim)</button>
     <button class="tabbar-btn active" data-tab="observe" role="tab" type="button" aria-selected="true">Observe (native)</button>
+    <button class="tabbar-btn" data-tab="subagents" role="tab" type="button" aria-selected="false">Subagents</button>
   </div>
 
   <div id="tab-control" class="tab-panel" hidden>
@@ -352,6 +352,33 @@
          INLINE as an accordion into each row's .obs-run-detail — built in app.js. -->
   </section>
   </div><!-- /tab-observe -->
+
+  <div id="tab-subagents" class="tab-panel" hidden>
+  <!-- ── Subagents tree ───────────────────────────────────────────────────────── -->
+    <section class="card" style="padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0;font-size:16px;display:flex;align-items:center;gap:8px">
+            Subagents
+            <span class="source-badge badge-observed" title="Direct Task/Agent subagents — parent→child tree, reconstructed from transcripts">parent → child</span>
+          </h2>
+          <div id="sub-context" class="muted" style="font-size:12px;margin-top:4px"></div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-tertiary btn-sm" type="button" id="sub-expand-all">Expand all</button>
+          <button class="btn btn-tertiary btn-sm" type="button" id="sub-collapse-all">Collapse all</button>
+          <button class="btn btn-tertiary btn-sm" type="button" id="sub-flatten" aria-pressed="false">Flatten</button>
+          <button class="btn btn-tertiary btn-sm" type="button" id="sub-refresh" aria-label="Refresh subagents">Refresh</button>
+        </div>
+      </div>
+      <div id="sub-rollup" class="muted" style="font-size:12px;margin:8px 0 2px"></div>
+      <div id="sub-types" style="margin:6px 0 2px"></div>
+      <div id="subagents-table-wrap" style="margin-top:10px"></div>
+      <!-- shared inline drill-in slot: a selected subagent's full per-agent trace renders here -->
+      <div class="sub-call-detail obs-call-detail" hidden style="margin:14px 0;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:12px"></div>
+      <p class="observed-caveat label-13 muted" style="margin-top:12px">Parent→child is resolved by matching each subagent's spawning <code>Agent</code> tool-call id to the transcript that emitted it; depth is computed, not stored. Cost is reconstructed (cache_creation ×1.25, cache_read ×0.10) — an estimate, not a billing value. Status is derived from the transcript, not an authoritative harness signal.</p>
+    </section>
+  </div><!-- /tab-subagents -->
 
 </main>
 
