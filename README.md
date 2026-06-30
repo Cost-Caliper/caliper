@@ -30,8 +30,9 @@ them under `packages/` preserves every relative import unchanged.
 ```
 
 Then run **`/control-tower`** in any session. It installs deps on first run, auto-discovers
-the newest run-bearing session (preferring the current project), and starts the dashboard
-at `http://localhost:8787` with the **Observe (native)** tab pointed at your real runs.
+the newest run-bearing session (preferring the current project), and starts the dashboard on
+a **random free high port** (printed at launch — it won't collide with your own dev servers)
+with the **Observe (native)** tab pointed at your real runs.
 
 ## Use the dashboard directly
 

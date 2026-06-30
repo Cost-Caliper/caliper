@@ -6,6 +6,11 @@
 // Usage:
 //   node scripts/launch-control-tower.mjs [--session-dir <path>] [--port <n>]
 //
+// Port: by default a RANDOM free high port (40000–59999) is chosen so the dashboard
+// never collides with the common dev ports builders use (3000/5173/8080/8787/…).
+// Pass --port <n> or set PORT to pin a specific port. The chosen URL is always
+// printed as: "[launch] starting Control Tower on http://localhost:<port>".
+//
 // Session-dir resolution order:
 //   1. --session-dir <path>
 //   2. $WFLENS_SESSION_DIR
@@ -16,6 +21,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
+import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -32,7 +38,28 @@ function flag(name) {
   const i = argv.indexOf(name)
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : null
 }
-const PORT = flag('--port') || process.env.PORT || '8787'
+// Explicit port override (--port or PORT). When absent we pick a random free high port.
+const PORT_OVERRIDE = flag('--port') || process.env.PORT || null
+
+// ── port selection ──────────────────────────────────────────────────────────────
+function probePort(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer()
+    srv.once('error', () => resolve(false))
+    srv.once('listening', () => srv.close(() => resolve(true)))
+    srv.listen(port, '127.0.0.1')
+  })
+}
+
+// Random high port (40000–59999), probed until free, so the dashboard never
+// collides with the common dev ports builders run (3000/5173/8080/8787/…).
+async function pickFreePort() {
+  for (let i = 0; i < 50; i++) {
+    const port = 40000 + Math.floor(Math.random() * 20000)
+    if (await probePort(port)) return port
+  }
+  return 0 // last resort: let the OS assign an ephemeral port
+}
 
 // ── dependency bootstrap ────────────────────────────────────────────────────────
 function ensureDeps(dir, label) {
@@ -132,6 +159,7 @@ if (sessionDir) {
   console.error('[launch] no session dir found — Observe tab disabled; Control/Replay tab still works')
 }
 
+const PORT = PORT_OVERRIDE || String(await pickFreePort())
 const env = { ...process.env, PORT }
 if (sessionDir) env.WFLENS_SESSION_DIR = sessionDir
 

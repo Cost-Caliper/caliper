@@ -36,16 +36,18 @@ workflow-lens operates on that file **unmodified**.
 
 ```sh
 node scripts/launch-control-tower.mjs            # auto-discovers the current session
-node scripts/launch-control-tower.mjs --port 9000
+node scripts/launch-control-tower.mjs --port 9000  # pin a port (default is a random free high port)
 node scripts/launch-control-tower.mjs --session-dir ~/.claude/projects/<proj>/<session>
 ```
 
-Start it **in the background** (long-running server), wait ~2s, then
-`curl -fsS http://localhost:8787/v1/health`. The **Observe (native)** tab needs a
-session dir containing `workflows/wf_*.json` (+ `subagents/workflows/wf_*/`) — that is
-where the `Workflow` tool writes run artifacts. Cost shown there is reconstructed from
-transcripts with the cache-aware convention (cache_creation ×1.25, cache_read ×0.10), so
-it is an estimate, not a billed figure.
+Start it **in the background** (long-running server). It binds to a **random free high
+port** so it won't clash with the user's own dev servers — read the actual URL from the
+launcher's `[launch] starting Control Tower on http://localhost:<port>` line, then confirm
+with `curl -fsS http://localhost:<port>/v1/health` and report that URL to the user. The
+**Observe (native)** tab needs a session dir containing `workflows/wf_*.json` (+
+`subagents/workflows/wf_*/`) — that is where the `Workflow` tool writes run artifacts. Cost
+shown there is reconstructed from transcripts with the cache-aware convention
+(cache_creation ×1.25, cache_read ×0.10), so it is an estimate, not a billed figure.
 
 ## workflow-lens CLI (keyless unless noted)
 
