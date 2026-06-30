@@ -118,6 +118,39 @@ function parseJournal(journalPath) {
   return agentMap
 }
 
+// ── Inference-vs-tool segmentation ────────────────────────────────────────────
+// Partition an agent's transcript into spans of model inference vs tool execution.
+//
+// events: [{ tsMs, type:'prompt'|'assistant'|'tool_result' }] in ascending ts order.
+// Each inter-event gap is attributed by the event it leads INTO:
+//   • a gap ending at an `assistant` message  → the model was inferring
+//   • a gap ending at a `tool_result`         → a tool was executing
+// Adjacent same-kind spans are merged. startMs/endMs are relative to events[0].
+export function buildSegments(events) {
+  if (!Array.isArray(events) || events.length < 2) {
+    return { segments: [], inferenceMs: 0, toolMs: 0 }
+  }
+  const t0 = events[0].tsMs
+  const segments = []
+  for (let i = 1; i < events.length; i++) {
+    const startMs = events[i - 1].tsMs - t0
+    const endMs = events[i].tsMs - t0
+    if (endMs < startMs) continue // out-of-order guard
+    const kind = events[i].type === 'tool_result' ? 'tool' : 'inference'
+    const last = segments[segments.length - 1]
+    if (last && last.kind === kind) last.endMs = endMs
+    else segments.push({ kind, startMs, endMs })
+  }
+  let inferenceMs = 0
+  let toolMs = 0
+  for (const s of segments) {
+    const d = s.endMs - s.startMs
+    if (s.kind === 'tool') toolMs += d
+    else inferenceMs += d
+  }
+  return { segments, inferenceMs, toolMs }
+}
+
 // ── Parse agent-<id>.jsonl ────────────────────────────────────────────────────
 // Sums usage across all assistant turns in the transcript.
 // Returns {model, totalUsage, firstTimestamp, lastTimestamp}
@@ -136,6 +169,7 @@ function parseAgentTranscript(transcriptPath) {
   let assistantTurns = 0
   let toolCalls = 0
   const tools = new Set()
+  const events = []  // {tsMs, type} for inference-vs-tool segmentation
   const totalUsage = {
     input_tokens: 0,
     output_tokens: 0,
@@ -153,11 +187,15 @@ function parseAgentTranscript(transcriptPath) {
     if (!cwd && entry.cwd) cwd = entry.cwd
     if (!gitBranch && entry.gitBranch) gitBranch = entry.gitBranch
     const msg = entry.message || {}
+    const tsMs = entry.timestamp ? new Date(entry.timestamp).getTime() : NaN
     if (entry.type === 'user') {
+      const isToolResult = Array.isArray(msg.content) && msg.content.some((b) => b && b.type === 'tool_result')
+      if (!isNaN(tsMs)) events.push({ tsMs, type: isToolResult ? 'tool_result' : 'prompt' })
       if (task === null) { const t = textOf(msg.content).trim(); if (t) task = t }
       continue
     }
     if (entry.type !== 'assistant') continue
+    if (!isNaN(tsMs)) events.push({ tsMs, type: 'assistant' })
     assistantTurns++
     if (!model && msg.model) model = msg.model
     const usage = msg.usage || {}
@@ -178,10 +216,13 @@ function parseAgentTranscript(transcriptPath) {
   }
 
   const trunc = (s, n) => (s == null ? null : s.length > n ? s.slice(0, n) + '…' : s)
+  events.sort((a, b) => a.tsMs - b.tsMs)
+  const { segments, inferenceMs, toolMs } = buildSegments(events)
   return {
     model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
     task: trunc(task, 1400), output: trunc(output, 900),
     assistantTurns, toolCalls, tools: [...tools],
+    segments, inferenceMs, toolMs,
   }
 }
 
@@ -273,6 +314,9 @@ export function reconstructRun(runId, sessDir, extraBeacons = [], beaconsByInstr
       toolCalls: transcript?.toolCalls || 0,
       tools: transcript?.tools || [],
       turns: transcript?.assistantTurns || 0,
+      segments: transcript?.segments || [],
+      inferenceMs: +(transcript?.inferenceMs || 0).toFixed(1),
+      toolMs: +(transcript?.toolMs || 0).toFixed(1),
       requestId: null,
       error: null,
     })

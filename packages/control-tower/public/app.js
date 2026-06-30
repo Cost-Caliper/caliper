@@ -1270,8 +1270,9 @@ function buildDetailHtml(run) {
     + (ctx ? `<div class="obs-detail-context">${ctx}</div>` : '')
     + cards
     + '<section style="margin:14px 0">'
-    +   '<div style="font-size:13px;color:var(--gray-1000);margin-bottom:6px">Timeline <span style="color:var(--gray-900);font-size:11px">— wall-clock from real transcript timestamps</span></div>'
+    +   '<div style="font-size:13px;color:var(--gray-1000);margin-bottom:6px">Timeline <span style="color:var(--gray-900);font-size:11px">— each agent split into inference vs tool time, from real transcript timestamps</span></div>'
     +   `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg(calls)}</div>`
+    +   timelineLegend()
     +   '<div class="muted" style="font-size:11px;margin-top:4px">Click a bar (or a table row) to see the task that agent ran.</div>'
     + '</section>'
     + '<div class="obs-call-detail" hidden style="margin:14px 0;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:12px"></div>'
@@ -1302,24 +1303,61 @@ function buildCallsTable(calls) {
   return `<div class="call-table-wrap"><table class="call-table" aria-label="Observed per-call telemetry">${head}<tbody>${body}</tbody></table></div>`;
 }
 
+// Inference-vs-tool segment colors (also used by the legend in the detail view).
+const SEG_COLOR = { inference: '#3b82f6', tool: '#f59e0b' };
+
 // Static concurrent-agent timeline — bars span each call's real startMs→endMs (from
-// transcript timestamps), colored by tier; bars/labels carry data-call-idx. Returns a string.
+// transcript timestamps). Each bar is split into color-coded segments: inference
+// (model time) vs tool (tool execution), proportional to real per-span durations.
+// A leading tier dot preserves the model tier. Bars/labels carry data-call-idx.
 function buildTimelineSvg(calls) {
   if (!calls || !calls.length) return '<div class="muted" style="padding:8px;font-size:12px">No timeline data.</div>';
   const maxEnd = Math.max(1, ...calls.map((c) => c.endMs || 0));
-  const W = 920, rowH = 26, padL = 150, padR = 70, innerW = W - padL - padR;
+  const W = 920, rowH = 26, padL = 150, padR = 90, innerW = W - padL - padR;
   const H = calls.length * rowH + 14;
   const xOf = (ms) => padL + (Math.max(0, ms) / maxEnd) * innerW;
+  const barH = rowH - 11;
   const bars = calls.map((c, i) => {
     const y = 8 + i * rowH;
     const bx = xOf(c.startMs || 0);
     const bw = Math.max(2, xOf(c.endMs || (c.startMs || 0)) - bx);
-    const label = esc((c.label || '').slice(0, 24));
-    return `<text data-call-idx="${i}" x="${padL - 8}" y="${y + 14}" text-anchor="end" style="cursor:pointer;font-size:11.5px;fill:var(--gray-1000)">${label}</text>`
-      + `<rect data-call-idx="${i}" x="${bx}" y="${y + 4}" width="${bw}" height="${rowH - 11}" rx="3" fill="${tierColor(c.tier)}" opacity="0.88" style="cursor:pointer"><title>${esc(c.label || '')} · ${fmtMs(c.ms)} · ${fmtUsd(c.costUsd)}</title></rect>`
-      + `<text x="${bx + bw + 6}" y="${y + 14}" style="font-size:10px;fill:var(--gray-900)">${fmtMs(c.ms)}</text>`;
+    const label = esc((c.label || '').slice(0, 22));
+    const segs = Array.isArray(c.segments) ? c.segments : [];
+    const segTotal = segs.length ? segs[segs.length - 1].endMs - segs[0].startMs : 0;
+
+    let bar;
+    if (segs.length && segTotal > 0) {
+      // Map each segment's real-time offset proportionally onto the agent's bar.
+      bar = segs.map((s) => {
+        const f0 = (s.startMs - segs[0].startMs) / segTotal;
+        const f1 = (s.endMs - segs[0].startMs) / segTotal;
+        const sx = bx + f0 * bw;
+        const sw = Math.max(1, (f1 - f0) * bw);
+        return `<rect data-call-idx="${i}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"><title>${esc(c.label || '')} — ${s.kind} ${fmtMs(s.endMs - s.startMs)}</title></rect>`;
+      }).join('');
+      // hairline frame so adjacent same-color runs still read as one bar
+      bar += `<rect data-call-idx="${i}" x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="2" fill="none" stroke="var(--border)" stroke-width="0.5" style="cursor:pointer"></rect>`;
+    } else {
+      // Fallback: no per-segment data → single tier-colored bar.
+      bar = `<rect data-call-idx="${i}" x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="3" fill="${tierColor(c.tier)}" opacity="0.88" style="cursor:pointer"><title>${esc(c.label || '')} · ${fmtMs(c.ms)} · ${fmtUsd(c.costUsd)}</title></rect>`;
+    }
+
+    const toolPct = (c.inferenceMs + c.toolMs) > 0 ? Math.round((100 * c.toolMs) / (c.inferenceMs + c.toolMs)) : null;
+    const trailing = toolPct == null ? fmtMs(c.ms) : `${fmtMs(c.ms)} · ${toolPct}% tool`;
+    return `<circle cx="10" cy="${y + 4 + barH / 2}" r="4" fill="${tierColor(c.tier)}"><title>${esc(c.tier || '')}</title></circle>`
+      + `<text data-call-idx="${i}" x="${padL - 8}" y="${y + 14}" text-anchor="end" style="cursor:pointer;font-size:11.5px;fill:var(--gray-1000)">${label}</text>`
+      + bar
+      + `<text x="${bx + bw + 6}" y="${y + 14}" style="font-size:10px;fill:var(--gray-900)">${trailing}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto">${bars}</svg>`;
+}
+
+// Legend for the segmented timeline (inference vs tool).
+function timelineLegend() {
+  const sw = (color, text) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px">`
+    + `<span style="width:11px;height:11px;border-radius:2px;background:${color};display:inline-block"></span>`
+    + `<span style="font-size:11px;color:var(--gray-900)">${text}</span></span>`;
+  return `<div style="margin-top:6px">${sw(SEG_COLOR.inference, 'Inference (model)')}${sw(SEG_COLOR.tool, 'Tool execution')}</div>`;
 }
 
 // Inline drill-in for one agent call: the task it received, its output + metadata.
