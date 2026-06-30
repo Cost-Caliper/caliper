@@ -1102,7 +1102,14 @@ observedEls.list?.addEventListener('click', (e) => {
     const item = callEl.closest('.obs-run-item'); if (!item) return;
     const run = runCache.get(item.dataset.runId);
     const c = run?.telemetry?.calls?.[Number(callEl.dataset.callIdx)];
-    if (c) openCallDrawer(c);
+    if (!c) return;
+    // Agent name (data-drill="inline") → full trace inline; bars/segments/rows → drawer.
+    if (callEl.getAttribute('data-drill') === 'inline') {
+      const slot = item.querySelector('.obs-call-detail');
+      if (slot) renderCallDetailInto(slot, c);
+    } else {
+      openCallDrawer(c);
+    }
     return;
   }
   const row = e.target.closest('.obs-run-row');
@@ -1354,7 +1361,7 @@ function buildDetailHtml(run) {
     +   '<div style="font-size:13px;color:var(--gray-1000);margin-bottom:6px">Timeline <span style="color:var(--gray-900);font-size:11px">— each agent split into inference vs tool time, from real transcript timestamps</span></div>'
     +   `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg(calls)}</div>`
     +   timelineLegend()
-    +   '<div class="muted" style="font-size:11px;margin-top:4px">Hover a segment for what it is (inference vs tool); click a bar or table row to open its full details on the right.</div>'
+    +   '<div class="muted" style="font-size:11px;margin-top:4px">Hover a segment to see what it is. Click an <strong>agent name</strong> for its full trace (below); click a <strong>bar</strong> or table row for quick details (right).</div>'
     + '</section>'
     + '<div class="obs-call-detail" hidden style="margin:14px 0;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:12px"></div>'
     + buildCallsTable(calls)
@@ -1428,7 +1435,7 @@ function buildTimelineSvg(calls) {
     const toolPct = (c.inferenceMs + c.toolMs) > 0 ? Math.round((100 * c.toolMs) / (c.inferenceMs + c.toolMs)) : null;
     const trailing = toolPct == null ? fmtMs(c.ms) : `${fmtMs(c.ms)} · ${toolPct}% tool`;
     return `<circle cx="10" cy="${y + 4 + barH / 2}" r="4" fill="${tierColor(c.tier)}"><title>${esc(c.tier || '')}</title></circle>`
-      + `<text data-call-idx="${i}" x="${padL - 8}" y="${y + 14}" text-anchor="end" style="cursor:pointer;font-size:11.5px;fill:var(--gray-1000)">${label}</text>`
+      + `<text data-call-idx="${i}" data-drill="inline" x="${padL - 8}" y="${y + 14}" text-anchor="end" style="cursor:pointer;font-size:11.5px;fill:var(--gray-1000)"><title>Click the name for the full trace below</title>${label}</text>`
       + bar
       + `<text x="${bx + bw + 6}" y="${y + 14}" style="font-size:10px;fill:var(--gray-900)">${trailing}</text>`;
   }).join('');
@@ -1461,11 +1468,32 @@ function renderCallDetailInto(slot, c) {
     kv('tool calls', String(c.toolCalls || 0)),
     kv('tools', (c.tools || []).join(', ') || '—'),
   ].join('<span style="color:var(--gray-500)"> · </span>');
+
+  // Full trace: every inference span + tool call in order, with durations.
+  const segs = Array.isArray(c.segments) ? c.segments : [];
+  const traceRows = segs.map((s, n) => {
+    const isTool = s.kind === 'tool';
+    const dot = isTool ? SEG_COLOR.tool : SEG_COLOR.inference;
+    const name = isTool
+      ? (s.tools && s.tools.length ? 'Tool · ' + esc(s.tools.join(', ')) : 'Tool execution')
+      : 'Inference';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:3px 6px;font-size:12px;border-top:1px solid var(--border)">`
+      + `<span class="mono" style="color:var(--gray-500);min-width:22px;text-align:right">${n + 1}</span>`
+      + `<span class="tl-tip-dot" style="background:${dot}"></span>`
+      + `<span style="color:var(--gray-1000);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>`
+      + `<span class="mono" style="color:var(--gray-900)">${fmtMs(s.endMs - s.startMs)}</span></div>`;
+  }).join('');
+  const traceSection = segs.length
+    ? `<div style="font-size:12px;color:var(--gray-900);margin-bottom:4px">Trace — ${segs.length} steps (inference &amp; tool calls, in order)</div>`
+      + `<div style="background:var(--bg-200);border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;margin:0 0 10px">${traceRows}</div>`
+    : '';
+
   slot.innerHTML =
     `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`
-    + `<div style="font-size:14px;color:var(--gray-1000)"><span class="tier-dot" style="background:${esc(tierColor(c.tier))}"></span> ${esc(c.label || '')}</div>`
+    + `<div style="font-size:14px;color:var(--gray-1000)"><span class="tier-dot" style="background:${esc(tierColor(c.tier))}"></span> ${esc(c.label || '')} <span class="muted" style="font-size:11px">— full trace</span></div>`
     + `<button class="btn btn-tertiary btn-sm" type="button" data-close-call="1">Close</button></div>`
     + `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px;font-size:12px">${meta}</div>`
+    + traceSection
     + `<div style="font-size:12px;color:var(--gray-900);margin-bottom:4px">Task — the prompt this agent received</div>`
     + `<pre style="background:var(--bg-200);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;color:var(--gray-1000);margin:0 0 10px">${esc(c.task || '(no prompt captured)')}</pre>`
     + `<div style="font-size:12px;color:var(--gray-900);margin-bottom:4px">Output — its last assistant text</div>`
