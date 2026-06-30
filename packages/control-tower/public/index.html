@@ -371,6 +371,11 @@
           <span class="source-badge badge-observed" title="Direct Task/Agent subagents — parent→child tree, reconstructed from transcripts">parent → child</span>
         </h2>
         <div class="flex-center gap-8">
+          <div class="seg-control" role="group" aria-label="Subagents view">
+            <button class="seg-btn" type="button" data-subview="tree" aria-pressed="true">Tree</button>
+            <button class="seg-btn" type="button" data-subview="timeline" aria-pressed="false">Timeline</button>
+            <button class="seg-btn" type="button" data-subview="table" aria-pressed="false">Table</button>
+          </div>
           <button class="btn btn-tertiary btn-sm" type="button" id="sub-expand-all">Expand all</button>
           <button class="btn btn-tertiary btn-sm" type="button" id="sub-collapse-all">Collapse all</button>
           <button class="btn btn-tertiary btn-sm" type="button" id="sub-flatten" aria-pressed="false">Flatten</button>
@@ -380,6 +385,7 @@
       <div id="sub-context" class="project-context"></div>
       <div id="sub-rollup" class="label-13 muted" style="margin:6px 0 2px"></div>
       <div id="sub-types" style="margin:6px 0 2px"></div>
+      <div id="subagents-graph-wrap" style="margin-top:10px" hidden></div>
       <div id="subagents-table-wrap" style="margin-top:10px"></div>
       <!-- shared inline drill-in slot: a selected subagent's full per-agent trace renders here -->
       <div class="sub-call-detail obs-call-detail" hidden style="margin:14px 0;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:12px"></div>

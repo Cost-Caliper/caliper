@@ -1687,13 +1687,17 @@ const subEls = {
   context: () => document.getElementById('sub-context'),
   rollup: () => document.getElementById('sub-rollup'),
   types: () => document.getElementById('sub-types'),
+  graph: () => document.getElementById('subagents-graph-wrap'),
   slot: () => document.querySelector('.sub-call-detail'),
 };
 const subCache = new Map();        // agentId -> /v1/subagents/:id detail
 let subForest = null;              // last { sessionId, root, rollup, cwd, gitBranch }
 let subFlatten = false;
+let subView = 'tree';              // 'tree' | 'timeline' | 'table'
+let subSelectedId = null;          // highlighted node in the graph
 let currentSubDetail = null;       // the selected subagent's detail (for segment-click → drawer)
 const subCollapsed = new Set();    // agentIds whose subtree is collapsed
+const subFanExpanded = new Set();  // parent ids whose capped fan-out was expanded to full
 
 function walkForest(node, fn) { if (!node) return; fn(node); for (const k of (node.children || [])) walkForest(k, fn); }
 function allSubNodes(root) { const out = []; walkForest(root, (n) => { if (n.agentId !== MAIN_SESSION_ID) out.push(n); }); return out; }
@@ -1708,6 +1712,8 @@ async function loadSubagentTree() {
   renderSubHeader(data);
   if (!data || !data.root || !data.rollup || data.rollup.totalSubagents === 0) {
     const hint = data?.cwd ? `Watching <code>${esc(homeAbbrev(data.cwd))}</code>` : (data?.sessionId ? '' : 'Set <code>WFLENS_SESSION_DIR</code> to a session dir.');
+    const g = subEls.graph(); if (g) g.hidden = true;
+    wrap.hidden = false;
     wrap.innerHTML = ctEmptyHtml(
       'No subagents in this session',
       'Subagents you launch with the Task/Agent tool appear here as a parent → child tree. (Subagents spawned inside a Workflow show under the Workflows tab.)',
@@ -1717,8 +1723,153 @@ async function loadSubagentTree() {
   }
   // Default expand: MAIN + roots + their direct children visible; deeper subtrees collapsed.
   subCollapsed.clear();
+  subFanExpanded.clear();
   walkForest(data.root, (n) => { if ((n.depth || 0) >= 2 && n.childCount > 0) subCollapsed.add(n.agentId); });
-  renderSubTable();
+  renderSubView();
+}
+
+// Dispatch the active Subagents view (tree graph / timeline swimlane / table).
+function renderSubView() {
+  const tableWrap = subEls.wrap(); const graphWrap = subEls.graph();
+  if (!subForest || !subForest.root) return;
+  if (subView === 'table') {
+    if (graphWrap) graphWrap.hidden = true;
+    if (tableWrap) tableWrap.hidden = false;
+    renderSubTable();
+  } else {
+    if (tableWrap) tableWrap.hidden = true;
+    if (graphWrap) {
+      graphWrap.hidden = false;
+      graphWrap.innerHTML = subView === 'timeline' ? buildSubSwimlaneSvg(subForest.root) : buildSubGraphSvg(subForest.root);
+    }
+  }
+}
+
+function truncTxt(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+function subStatusStroke(node) {
+  const s = node.orphan ? 'orphan' : (node.status || '');
+  return s === 'running' ? 'var(--blue)' : s === 'orphan' ? 'var(--amber, #f59e0b)' : s === 'missing' ? 'var(--red, #ef4444)' : s === 'session' ? 'var(--gray-700)' : 'var(--green, #10b981)';
+}
+
+// Node-link SPAWN TREE (vertical, top-down): MAIN → roots → nested, honoring the same
+// collapse rule as the table, with a fan-out cap. Reuses tierColor + status colors + the
+// existing data-agent-id (→ selectSubagent) and data-sub-chevron (→ collapse) handlers.
+function buildSubGraphSvg(root) {
+  if (!root) return '';
+  const COL_W = 132, ROW_H = 64, padX = 20, padTop = 16, BOX_W = 116, BOX_H = 40, FAN_CAP = 12;
+  let col = 0;
+  const placed = [];   // {kind, node?, parentId?, hiddenCount?, depth, _col}
+  const edges = [];    // {parent, child, parentTier, dashed}
+
+  function layout(node, depth) {
+    const item = { kind: 'node', node, depth, _col: 0 };
+    placed.push(item);
+    const expanded = node.agentId === MAIN_SESSION_ID || !subCollapsed.has(node.agentId);
+    let kids = expanded ? (node.children || []) : [];
+    let fanItem = null;
+    if (kids.length > FAN_CAP && !subFanExpanded.has(node.agentId)) {
+      const keep = [...kids].sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0)).slice(0, FAN_CAP - 1);
+      const keepSet = new Set(keep.map((k) => k.agentId));
+      const shown = (node.children || []).filter((k) => keepSet.has(k.agentId)); // preserve sibling order
+      fanItem = { kind: 'fan', parentId: node.agentId, depth: depth + 1, hiddenCount: kids.length - shown.length, _col: 0 };
+      kids = shown;
+    }
+    const centers = [];
+    for (const k of kids) {
+      const c = layout(k, depth + 1);
+      centers.push(c._col);
+      edges.push({ parent: item, child: c.item, parentTier: node.tier, dashed: !!k.orphan });
+    }
+    if (fanItem) { fanItem._col = col++; placed.push(fanItem); centers.push(fanItem._col); edges.push({ parent: item, child: fanItem, parentTier: node.tier, dashed: false }); }
+    item._col = centers.length ? (centers[0] + centers[centers.length - 1]) / 2 : col++;
+    return { _col: item._col, item };
+  }
+  layout(root, 0);
+
+  let maxCol = 0, maxDepth = 0;
+  for (const it of placed) { maxCol = Math.max(maxCol, it._col); maxDepth = Math.max(maxDepth, it.depth); }
+  const W = padX * 2 + maxCol * COL_W + BOX_W;
+  const H = padTop * 2 + maxDepth * ROW_H + BOX_H;
+  const bx = (it) => padX + it._col * COL_W;
+  const cx = (it) => bx(it) + BOX_W / 2;
+  const by = (it) => padTop + it.depth * ROW_H;
+
+  let edgeSvg = '';
+  for (const e of edges) {
+    const px = cx(e.parent), py = by(e.parent) + BOX_H, ex = cx(e.child), ey = by(e.child);
+    const midY = (py + ey) / 2;
+    const color = e.dashed ? 'var(--amber, #f59e0b)' : tierColor(e.parentTier);
+    edgeSvg += `<path d="M ${px.toFixed(1)} ${py} V ${midY.toFixed(1)} H ${ex.toFixed(1)} V ${ey}" fill="none" stroke="${color}" stroke-opacity="0.5" stroke-width="1.5" stroke-linecap="round"${e.dashed ? ' stroke-dasharray="3 3"' : ''}/>`;
+  }
+
+  let nodeSvg = '';
+  for (const it of placed) {
+    const x = bx(it), y = by(it);
+    if (it.kind === 'fan') {
+      nodeSvg += `<g data-expand-fan="${esc(it.parentId)}" style="cursor:pointer"><title>Show ${it.hiddenCount} more children</title>`
+        + `<rect x="${x.toFixed(1)}" y="${y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="var(--gray-100)" stroke="var(--border)" stroke-dasharray="4 3"/>`
+        + `<text x="${(x + BOX_W / 2).toFixed(1)}" y="${y + BOX_H / 2 + 4}" text-anchor="middle" style="font-size:11px;fill:var(--gray-900)">+${it.hiddenCount} more</text></g>`;
+      continue;
+    }
+    const n = it.node;
+    const isMain = n.agentId === MAIN_SESSION_ID;
+    const stroke = subStatusStroke(n);
+    const sel = n.agentId === subSelectedId;
+    const full = isMain ? 'main session' : (n.description || n.agentId);
+    nodeSvg += `<g class="sub-gnode" data-agent-id="${esc(n.agentId)}" style="cursor:pointer">`
+      + `<title>${esc(full)} · ${esc(n.tier || '')} · ${fmtMs(n.ms || 0)} · ${fmtUsdShort(n.costUsd || 0)}${n.orphan ? ' · ⚠ orphan' : ''}</title>`
+      + `<rect x="${x.toFixed(1)}" y="${y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="${tierColor(n.tier)}" fill-opacity="${sel ? 0.22 : 0.12}" stroke="${stroke}" stroke-width="${sel ? 2.5 : (n.orphan ? 2 : 1.25)}"/>`
+      + `<circle cx="${(x + 10).toFixed(1)}" cy="${y + 12}" r="4" fill="${tierColor(n.tier)}"/>`
+      + `<text x="${(x + 20).toFixed(1)}" y="${y + 16}" style="font-size:11px;fill:var(--gray-1000)">${esc(truncTxt(full, 13))}</text>`
+      + `<text x="${(x + 10).toFixed(1)}" y="${y + 31}" style="font-size:9.5px;fill:var(--gray-700)">${fmtMs(n.ms || 0)} · ${fmtUsdShort(n.costUsd || 0)}</text>`;
+    if ((n.childCount || 0) > 0 && !isMain) {
+      const collapsed = subCollapsed.has(n.agentId);
+      nodeSvg += `<g data-sub-chevron="${esc(n.agentId)}" style="cursor:pointer"><title>${collapsed ? 'Expand' : 'Collapse'} ${n.childCount} children</title>`
+        + `<rect x="${(x + BOX_W - 26).toFixed(1)}" y="${y + BOX_H - 14}" width="24" height="12" rx="6" fill="var(--gray-300)"/>`
+        + `<text x="${(x + BOX_W - 14).toFixed(1)}" y="${y + BOX_H - 5}" text-anchor="middle" style="font-size:8.5px;font-weight:600;fill:var(--gray-1000)">${collapsed ? ('+' + n.childCount) : '−'}</text></g>`;
+    }
+    nodeSvg += '</g>';
+  }
+
+  const svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" style="max-width:none;height:auto;font-family:ui-monospace,monospace">${edgeSvg}${nodeSvg}</svg>`;
+  return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px">${svg}</div>${subGraphLegend()}`;
+}
+
+function subGraphLegend() {
+  const dot = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px"><span class="tier-dot" style="background:${c}"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
+  const box = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px"><span style="width:12px;height:9px;border:1.5px solid ${c};border-radius:2px;display:inline-block"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
+  return '<div style="margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:3px 0">'
+    + dot(tierColor('opus'), 'opus') + dot(tierColor('sonnet'), 'sonnet') + dot(tierColor('haiku'), 'haiku')
+    + '<span style="width:16px"></span>'
+    + box('var(--green,#10b981)', 'done') + box('var(--blue)', 'running') + box('var(--amber,#f59e0b)', 'orphan')
+    + '<span style="font-size:11px;color:var(--gray-700)">· edge hue = spawning agent’s tier · dashed = parent not found</span></div>';
+}
+
+// Temporal swimlane: one bar per subagent on a shared time axis → see concurrency.
+function buildSubSwimlaneSvg(root) {
+  const nodes = [];
+  walkForest(root, (n) => { if (n.agentId !== MAIN_SESSION_ID) nodes.push(n); });
+  if (!nodes.length) return '<div class="muted" style="padding:8px;font-size:12px">No subagents.</div>';
+  const starts = nodes.map((n) => n.startedAtMs || 0).filter(Boolean);
+  const minStart = starts.length ? Math.min(...starts) : 0;
+  const maxEnd = Math.max(1, ...nodes.map((n) => ((n.startedAtMs || minStart) - minStart) + (n.ms || 0)));
+  const W = 920, rowH = 24, padL = 170, padR = 70, innerW = W - padL - padR, barH = 13;
+  const H = nodes.length * rowH + 16;
+  const xOf = (ms) => padL + (Math.max(0, ms) / maxEnd) * innerW;
+  const rows = nodes.map((n, i) => {
+    const y = 8 + i * rowH;
+    const rel = (n.startedAtMs || minStart) - minStart;
+    const x0 = xOf(rel), x1 = xOf(rel + (n.ms || 0));
+    const bw = Math.max(2, x1 - x0);
+    const label = esc(truncTxt(n.description || n.agentId, 22));
+    return `<circle cx="10" cy="${y + barH / 2}" r="4" fill="${tierColor(n.tier)}"><title>${esc(n.tier || '')}</title></circle>`
+      + `<text data-agent-id="${esc(n.agentId)}" x="${padL - 8}" y="${y + 11}" text-anchor="end" style="cursor:pointer;font-size:11px;fill:var(--gray-1000)">${label}</text>`
+      + `<rect data-agent-id="${esc(n.agentId)}" x="${x0.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${barH}" rx="2" fill="${tierColor(n.tier)}" opacity="0.85" style="cursor:pointer"><title>${esc(n.description || n.agentId)} · ${fmtMs(n.ms || 0)} · ${fmtUsdShort(n.costUsd || 0)}</title></rect>`
+      + `<text x="${(x1 + 6).toFixed(1)}" y="${y + 11}" style="font-size:9.5px;fill:var(--gray-700)">${fmtMs(n.ms || 0)}</text>`;
+  }).join('');
+  const svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto">${rows}</svg>`;
+  return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px">${svg}</div>`
+    + '<div class="muted" style="font-size:11px;margin-top:6px">Each bar is a subagent on a shared time axis. Overlapping bars ran concurrently; x-position ≈ when it was spawned (its first activity). Click a bar to drill in.</div>';
 }
 
 function renderSubHeader(data) {
@@ -1862,15 +2013,22 @@ subPanel?.addEventListener('click', (e) => {
     if (seg) openCallDrawer(currentSubDetail, seg);
     return;
   }
+  const fan = e.target.closest('[data-expand-fan]');
+  if (fan) { subFanExpanded.add(fan.getAttribute('data-expand-fan')); renderSubView(); return; }
   const chev = e.target.closest('[data-sub-chevron]');
   if (chev) {
     const id = chev.getAttribute('data-sub-chevron');
     if (subCollapsed.has(id)) subCollapsed.delete(id); else subCollapsed.add(id);
-    renderSubTable();
+    renderSubView();
     return;
   }
   const row = e.target.closest('[data-agent-id]');
-  if (row) { selectSubagent(row.dataset.agentId); return; }
+  if (row) {
+    subSelectedId = row.dataset.agentId;
+    if (subView !== 'table') renderSubView(); // move the highlight in the graph/timeline
+    selectSubagent(row.dataset.agentId);
+    return;
+  }
 });
 // Hover tooltip over the subagent detail timeline (reuses the Observed tooltip helpers).
 subPanel?.addEventListener('mousemove', (e) => {
@@ -1881,9 +2039,26 @@ subPanel?.addEventListener('mousemove', (e) => {
 subPanel?.addEventListener('mouseleave', hideSegTip);
 // Header controls.
 document.getElementById('sub-refresh')?.addEventListener('click', () => { subCache.clear(); loadSubagentTree(); });
-document.getElementById('sub-expand-all')?.addEventListener('click', () => { subCollapsed.clear(); renderSubTable(); });
-document.getElementById('sub-collapse-all')?.addEventListener('click', () => { if (subForest?.root) { walkForest(subForest.root, (n) => { if ((n.childCount || 0) > 0 && n.agentId !== MAIN_SESSION_ID) subCollapsed.add(n.agentId); }); renderSubTable(); } });
-document.getElementById('sub-flatten')?.addEventListener('click', (e) => { subFlatten = !subFlatten; e.currentTarget.setAttribute('aria-pressed', String(subFlatten)); e.currentTarget.classList.toggle('active', subFlatten); renderSubTable(); });
+document.getElementById('sub-expand-all')?.addEventListener('click', () => { subCollapsed.clear(); renderSubView(); });
+document.getElementById('sub-collapse-all')?.addEventListener('click', () => { if (subForest?.root) { walkForest(subForest.root, (n) => { if ((n.childCount || 0) > 0 && n.agentId !== MAIN_SESSION_ID) subCollapsed.add(n.agentId); }); renderSubView(); } });
+document.getElementById('sub-flatten')?.addEventListener('click', (e) => {
+  // Flatten is a flat, cost-sorted LIST — only meaningful in the table; turning it on switches to Table view.
+  subFlatten = !subFlatten;
+  e.currentTarget.setAttribute('aria-pressed', String(subFlatten));
+  e.currentTarget.classList.toggle('active', subFlatten);
+  if (subFlatten) setSubView('table'); else renderSubView();
+});
+// View toggle: Tree | Timeline | Table.
+function setSubView(v) {
+  subView = v;
+  document.querySelectorAll('.seg-btn[data-subview]').forEach((b) => {
+    const on = b.dataset.subview === v;
+    b.setAttribute('aria-pressed', String(on));
+    b.classList.toggle('active', on);
+  });
+  renderSubView();
+}
+document.querySelectorAll('.seg-btn[data-subview]').forEach((b) => b.addEventListener('click', () => setSubView(b.dataset.subview)));
 
 function setTab(tab) {
   const panels = { control: 'tab-control', observe: 'tab-observe', subagents: 'tab-subagents' };
