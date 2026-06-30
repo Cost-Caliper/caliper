@@ -98,6 +98,7 @@ export function parseRunJson(runId, sessDir) {
   return {
     runId,
     workflowName,
+    scriptPath: raw.scriptPath || null,
     status: raw.status || 'unknown',
     defaultModel: raw.defaultModel || null,
     agentCount: raw.agentCount || 0,
@@ -548,6 +549,7 @@ export function reconstructRun(runId, sessDir, extraBeacons = [], beaconsByInstr
     timestamp: runJson.timestamp,
     cwd: runCwd,
     gitBranch: runGitBranch,
+    scriptPath: runJson.scriptPath || null,
   }
 }
 
@@ -567,6 +569,7 @@ export function summaryFromRun(run) {
     timestamp: run.timestamp || null,
     cwd: run.cwd || null,
     gitBranch: run.gitBranch || null,
+    scriptPath: run.scriptPath || null,
   }
 }
 

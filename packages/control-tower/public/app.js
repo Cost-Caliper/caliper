@@ -1407,14 +1407,16 @@ function renderObservedList(runs) {
     const sub = [
       esc(fmtWhen(r)),
       r.gitBranch ? esc(r.gitBranch) : '',
-      r.cwd ? `<span title="${esc(r.cwd)}">${esc(abbrevDir(r.cwd))}</span>` : '',
+      // Full working-directory path (home-abbreviated, untruncated); absolute path on hover.
+      r.cwd ? `<span title="${esc(r.cwd)}">${esc(homeAbbrev(r.cwd))}</span>` : '',
     ].filter(Boolean).join('<span class="obs-sub-sep"> · </span>');
+    const nameTitle = r.scriptPath ? `Workflow file: ${r.scriptPath}` : (r.name || r.runId);
     return `
     <div class="obs-run-item" data-run-id="${esc(r.runId)}">
       <button class="obs-run-row" type="button" aria-expanded="false" aria-label="Toggle detail for ${esc(r.name || r.runId)}">
         <span class="obs-run-chevron" aria-hidden="true">▶</span>
         <span class="obs-run-main">
-          <span class="obs-run-name">${esc(r.name || r.runId)}</span>
+          <span class="obs-run-name" title="${esc(nameTitle)}">${esc(r.name || r.runId)}</span>
           ${sub ? `<span class="obs-run-sub">${sub}</span>` : ''}
         </span>
         <span class="obs-run-status ${esc(statusClass(r.status))}">${esc(r.status || 'unknown')}</span>
@@ -1506,7 +1508,8 @@ function buildDetailHtml(run) {
   // The run row already shows when · branch · dir, so don't repeat it here. Instead the
   // detail leads with a link to the workflow's source (the script the harness ran).
   const wfName = esc(run.meta?.name || run.runId || '');
-  const sourceLink = `<div class="obs-detail-context"><span class="wf-source-link" data-script="${esc(run.runId)}" title="View the workflow script (and its on-disk path) that produced this run">📄 ${wfName} — view workflow source</span></div>`;
+  const wfPathTitle = run.scriptPath ? `Workflow file: ${run.scriptPath} — click to view source` : 'View the workflow script that produced this run';
+  const sourceLink = `<div class="obs-detail-context"><span class="wf-source-link" data-script="${esc(run.runId)}" title="${esc(wfPathTitle)}">📄 ${wfName} — view workflow source</span></div>`;
 
   const stat = (n, label, desc) => `<div class="stat-card" title="${esc(desc)}"><div class="stat-n">${n}</div><div class="stat-label">${label}</div></div>`;
   const cards = '<div class="stat-cards stat-cards-sm">'
