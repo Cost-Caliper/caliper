@@ -372,6 +372,31 @@
   </div>
 </footer>
 
+<!-- Timeline hover tooltip + right-side call-detail drawer -->
+<style>
+  .tl-tip{position:fixed;z-index:60;pointer-events:none;max-width:300px;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:8px 10px;box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:12px;color:var(--gray-1000)}
+  .tl-tip-head{font-weight:600;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tl-tip-row{display:flex;align-items:center;gap:6px;color:var(--gray-900)}
+  .tl-tip-dot{width:9px;height:9px;border-radius:2px;display:inline-block;flex:0 0 auto}
+  .tl-tip-hint{margin-top:5px;font-size:10.5px;color:var(--blue)}
+  .cd-scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:70}
+  .cd-drawer{position:fixed;top:0;right:0;height:100vh;width:min(460px,94vw);background:var(--bg-100);border-left:1px solid var(--border);box-shadow:-12px 0 32px rgba(0,0,0,.45);z-index:80;transform:translateX(100%);transition:transform .18s ease;display:flex;flex-direction:column}
+  .cd-drawer.open{transform:translateX(0)}
+  .cd-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);flex:0 0 auto}
+  .cd-body{padding:14px 16px;overflow:auto;flex:1 1 auto}
+  .cd-pre{background:var(--bg-200);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;color:var(--gray-1000);margin:0}
+  .cd-pre-tall{max-height:46vh}
+</style>
+<div id="tl-tip" class="tl-tip" hidden></div>
+<div id="cd-scrim" class="cd-scrim" hidden></div>
+<aside id="cd-drawer" class="cd-drawer" aria-hidden="true" aria-label="Call details">
+  <div class="cd-head">
+    <strong style="font-size:14px;color:var(--gray-1000)">Call details</strong>
+    <button class="btn btn-tertiary btn-sm" type="button" id="cd-close">Close</button>
+  </div>
+  <div class="cd-body"></div>
+</aside>
+
 <script src="/app.js" type="module"></script>
 </body>
 </html>

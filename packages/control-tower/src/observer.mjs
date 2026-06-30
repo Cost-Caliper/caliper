@@ -121,25 +121,37 @@ function parseJournal(journalPath) {
 // ── Inference-vs-tool segmentation ────────────────────────────────────────────
 // Partition an agent's transcript into spans of model inference vs tool execution.
 //
-// events: [{ tsMs, type:'prompt'|'assistant'|'tool_result' }] in ascending ts order.
+// events: [{ tsMs, type:'prompt'|'assistant'|'tool_result', tools? }] ascending by ts.
 // Each inter-event gap is attributed by the event it leads INTO:
 //   • a gap ending at an `assistant` message  → the model was inferring
 //   • a gap ending at a `tool_result`         → a tool was executing
-// Adjacent same-kind spans are merged. startMs/endMs are relative to events[0].
+// A tool span is labelled with the tool name(s) the most recent assistant turn
+// requested (assistant events may carry a `tools` name array). Adjacent same-kind
+// spans are merged (tool names unioned). startMs/endMs are relative to events[0].
 export function buildSegments(events) {
   if (!Array.isArray(events) || events.length < 2) {
     return { segments: [], inferenceMs: 0, toolMs: 0 }
   }
+  const union = (a, b) => [...new Set([...(a || []), ...(b || [])])]
   const t0 = events[0].tsMs
   const segments = []
+  let pendingTools = [] // tools requested by the most recent assistant turn
   for (let i = 1; i < events.length; i++) {
-    const startMs = events[i - 1].tsMs - t0
+    const prev = events[i - 1]
+    if (prev.type === 'assistant' && Array.isArray(prev.tools) && prev.tools.length) {
+      pendingTools = prev.tools
+    }
+    const startMs = prev.tsMs - t0
     const endMs = events[i].tsMs - t0
     if (endMs < startMs) continue // out-of-order guard
     const kind = events[i].type === 'tool_result' ? 'tool' : 'inference'
     const last = segments[segments.length - 1]
-    if (last && last.kind === kind) last.endMs = endMs
-    else segments.push({ kind, startMs, endMs })
+    if (last && last.kind === kind) {
+      last.endMs = endMs
+      if (kind === 'tool') last.tools = union(last.tools, pendingTools)
+    } else {
+      segments.push({ kind, startMs, endMs, tools: kind === 'tool' ? [...pendingTools] : [] })
+    }
   }
   let inferenceMs = 0
   let toolMs = 0
@@ -195,7 +207,6 @@ function parseAgentTranscript(transcriptPath) {
       continue
     }
     if (entry.type !== 'assistant') continue
-    if (!isNaN(tsMs)) events.push({ tsMs, type: 'assistant' })
     assistantTurns++
     if (!model && msg.model) model = msg.model
     const usage = msg.usage || {}
@@ -203,9 +214,11 @@ function parseAgentTranscript(transcriptPath) {
     totalUsage.output_tokens += usage.output_tokens || 0
     totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0
     totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0
+    const turnTools = [] // tool names this assistant turn requested (labels the tool span)
     if (Array.isArray(msg.content)) {
-      for (const b of msg.content) if (b && b.type === 'tool_use') { toolCalls++; if (b.name) tools.add(b.name) }
+      for (const b of msg.content) if (b && b.type === 'tool_use') { toolCalls++; if (b.name) { tools.add(b.name); turnTools.push(b.name) } }
     }
+    if (!isNaN(tsMs)) events.push({ tsMs, type: 'assistant', tools: turnTools })
     const txt = textOf(msg.content).trim()
     if (txt) output = txt
     const ts = entry.timestamp || null
@@ -215,12 +228,14 @@ function parseAgentTranscript(transcriptPath) {
     }
   }
 
+  // Generous caps: enough to show the full task/output in the detail drawer (which is
+  // scrollable) without bloating the run payload with pathologically large transcripts.
   const trunc = (s, n) => (s == null ? null : s.length > n ? s.slice(0, n) + '…' : s)
   events.sort((a, b) => a.tsMs - b.tsMs)
   const { segments, inferenceMs, toolMs } = buildSegments(events)
   return {
     model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
-    task: trunc(task, 1400), output: trunc(output, 900),
+    task: trunc(task, 8000), output: trunc(output, 20000),
     assistantTurns, toolCalls, tools: [...tools],
     segments, inferenceMs, toolMs,
   }

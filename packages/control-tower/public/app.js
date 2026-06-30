@@ -1102,13 +1102,94 @@ observedEls.list?.addEventListener('click', (e) => {
     const item = callEl.closest('.obs-run-item'); if (!item) return;
     const run = runCache.get(item.dataset.runId);
     const c = run?.telemetry?.calls?.[Number(callEl.dataset.callIdx)];
-    const slot = item.querySelector('.obs-call-detail');
-    if (slot && c) renderCallDetailInto(slot, c);
+    if (c) openCallDrawer(c);
     return;
   }
   const row = e.target.closest('.obs-run-row');
   if (row) toggleItem(row.closest('.obs-run-item'));
 });
+
+// ── Timeline hover tooltip ─────────────────────────────────────────────────────
+// A floating tooltip that follows the cursor over the timeline and summarizes the
+// segment underneath: inference vs tool, the tool name(s), and the span duration.
+let lastTipSeg = null;
+function showSegTip(e, seg) {
+  const tip = document.getElementById('tl-tip'); if (!tip) return;
+  const kind = seg.getAttribute('data-seg-kind');
+  const dur = Number(seg.getAttribute('data-seg-dur') || 0);
+  const toolsStr = seg.getAttribute('data-seg-tools') || '';
+  const label = seg.getAttribute('data-seg-label') || '';
+  const isTool = kind === 'tool';
+  const title = isTool ? (toolsStr ? `Tool · ${esc(toolsStr)}` : 'Tool execution') : 'Inference (model)';
+  const dot = isTool ? SEG_COLOR.tool : SEG_COLOR.inference;
+  tip.innerHTML = `<div class="tl-tip-head">${esc(label)}</div>`
+    + `<div class="tl-tip-row"><span class="tl-tip-dot" style="background:${dot}"></span><span>${title}</span> · <span class="mono">${fmtMs(dur)}</span></div>`
+    + `<div class="tl-tip-hint">click to open details →</div>`;
+  tip.hidden = false;
+  positionSegTip(e);
+}
+function positionSegTip(e) {
+  const tip = document.getElementById('tl-tip'); if (!tip || tip.hidden) return;
+  const pad = 14; const r = tip.getBoundingClientRect();
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + r.width > window.innerWidth - 8) x = e.clientX - r.width - pad;
+  if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - pad;
+  tip.style.left = Math.max(8, x) + 'px';
+  tip.style.top = Math.max(8, y) + 'px';
+}
+function hideSegTip() { const tip = document.getElementById('tl-tip'); if (tip) tip.hidden = true; lastTipSeg = null; }
+observedEls.list?.addEventListener('mousemove', (e) => {
+  const seg = e.target.closest('[data-seg-kind]');
+  if (!seg) { if (lastTipSeg) hideSegTip(); return; }
+  if (seg !== lastTipSeg) { lastTipSeg = seg; showSegTip(e, seg); } else positionSegTip(e);
+});
+observedEls.list?.addEventListener('mouseleave', hideSegTip);
+
+// ── Call detail drawer (right side) ────────────────────────────────────────────
+function callDetailHtml(c) {
+  const kv = (k, v) => `<span style="white-space:nowrap"><span style="color:var(--gray-700)">${esc(k)}</span> <span class="mono" style="color:var(--gray-1000)">${esc(String(v))}</span></span>`;
+  const meta = [
+    kv('model', (c.model || '').replace('claude-', '') || c.tier || '—'),
+    kv('phase', c.phase || '—'),
+    kv('wall', fmtMs(c.ms)),
+    kv('cost', fmtUsd(c.costUsd)),
+    kv('tok', fmtN(c.inTok) + '→' + fmtN(c.outTok)),
+    kv('cache', fmtN(c.cacheCreationTok || 0) + 'wr/' + fmtN(c.cacheReadTok || 0) + 'rd'),
+    kv('turns', String(c.turns || 0)),
+    kv('tool calls', String(c.toolCalls || 0)),
+  ].join('<span style="color:var(--gray-500)"> · </span>');
+  const split = (c.inferenceMs != null && c.toolMs != null)
+    ? `<div style="display:flex;gap:14px;align-items:center;margin:8px 0 2px;font-size:12px">`
+      + `<span><span class="tl-tip-dot" style="background:${SEG_COLOR.inference}"></span> Inference <span class="mono">${fmtMs(c.inferenceMs)}</span></span>`
+      + `<span><span class="tl-tip-dot" style="background:${SEG_COLOR.tool}"></span> Tool <span class="mono">${fmtMs(c.toolMs)}</span></span>`
+      + `</div>`
+    : '';
+  const tools = (c.tools || []).length
+    ? `<div style="font-size:12px;color:var(--gray-900);margin:6px 0">tools: <span class="mono" style="color:var(--gray-1000)">${esc((c.tools || []).join(', '))}</span></div>`
+    : '';
+  return `<div style="font-size:15px;color:var(--gray-1000);margin-bottom:8px"><span class="tier-dot" style="background:${esc(tierColor(c.tier))}"></span> ${esc(c.label || '')}</div>`
+    + `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;font-size:12px">${meta}</div>`
+    + split + tools
+    + `<div style="font-size:12px;color:var(--gray-900);margin:10px 0 4px">Task — the prompt this agent received</div>`
+    + `<pre class="cd-pre">${esc(c.task || '(no prompt captured)')}</pre>`
+    + `<div style="font-size:12px;color:var(--gray-900);margin:10px 0 4px">Output — its last assistant text</div>`
+    + `<pre class="cd-pre cd-pre-tall">${esc(c.output || '(no text output — tool-only turn)')}</pre>`;
+}
+function openCallDrawer(c) {
+  const dr = document.getElementById('cd-drawer'); const scrim = document.getElementById('cd-scrim');
+  if (!dr || !c) return;
+  const body = dr.querySelector('.cd-body'); if (body) body.innerHTML = callDetailHtml(c);
+  dr.classList.add('open'); dr.setAttribute('aria-hidden', 'false');
+  if (scrim) scrim.hidden = false;
+}
+function closeCallDrawer() {
+  const dr = document.getElementById('cd-drawer'); const scrim = document.getElementById('cd-scrim');
+  if (dr) { dr.classList.remove('open'); dr.setAttribute('aria-hidden', 'true'); }
+  if (scrim) scrim.hidden = true;
+}
+document.getElementById('cd-close')?.addEventListener('click', closeCallDrawer);
+document.getElementById('cd-scrim')?.addEventListener('click', closeCallDrawer);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCallDrawer(); });
 
 // ── Filter by git branch / working directory ───────────────────────────────────
 const obsFilterEls = {
@@ -1273,7 +1354,7 @@ function buildDetailHtml(run) {
     +   '<div style="font-size:13px;color:var(--gray-1000);margin-bottom:6px">Timeline <span style="color:var(--gray-900);font-size:11px">— each agent split into inference vs tool time, from real transcript timestamps</span></div>'
     +   `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg(calls)}</div>`
     +   timelineLegend()
-    +   '<div class="muted" style="font-size:11px;margin-top:4px">Click a bar (or a table row) to see the task that agent ran.</div>'
+    +   '<div class="muted" style="font-size:11px;margin-top:4px">Hover a segment for what it is (inference vs tool); click a bar or table row to open its full details on the right.</div>'
     + '</section>'
     + '<div class="obs-call-detail" hidden style="margin:14px 0;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:12px"></div>'
     + buildCallsTable(calls)
@@ -1333,7 +1414,9 @@ function buildTimelineSvg(calls) {
         const f1 = (s.endMs - segs[0].startMs) / segTotal;
         const sx = bx + f0 * bw;
         const sw = Math.max(1, (f1 - f0) * bw);
-        return `<rect data-call-idx="${i}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"><title>${esc(c.label || '')} — ${s.kind} ${fmtMs(s.endMs - s.startMs)}</title></rect>`;
+        const segTools = esc((s.tools || []).join(', '));
+        // data-seg-* feed the custom hover tooltip; data-call-idx opens the detail drawer.
+        return `<rect data-call-idx="${i}" data-seg-kind="${s.kind}" data-seg-dur="${(s.endMs - s.startMs).toFixed(0)}" data-seg-tools="${segTools}" data-seg-label="${esc(c.label || '')}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"></rect>`;
       }).join('');
       // hairline frame so adjacent same-color runs still read as one bar
       bar += `<rect data-call-idx="${i}" x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="2" fill="none" stroke="var(--border)" stroke-width="0.5" style="cursor:pointer"></rect>`;

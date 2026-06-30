@@ -17,12 +17,28 @@ test('buildSegments: classifies inference vs tool and merges adjacent spans', ()
   const { segments, inferenceMs, toolMs } = buildSegments(events)
 
   assert.deepEqual(segments, [
-    { kind: 'inference', startMs: 0, endMs: 1200 },
-    { kind: 'tool', startMs: 1200, endMs: 5000 },
-    { kind: 'inference', startMs: 5000, endMs: 6000 },
+    { kind: 'inference', startMs: 0, endMs: 1200, tools: [] },
+    { kind: 'tool', startMs: 1200, endMs: 5000, tools: [] },
+    { kind: 'inference', startMs: 5000, endMs: 6000, tools: [] },
   ])
   assert.equal(inferenceMs, 2200) // 1200 + 1000
   assert.equal(toolMs, 3800)
+})
+
+test('buildSegments: tool spans are labelled with the requesting turn\'s tool names', () => {
+  const events = [
+    { tsMs: 0, type: 'prompt' },
+    { tsMs: 1000, type: 'assistant', tools: ['Bash', 'Grep'] }, // requests two tools
+    { tsMs: 4000, type: 'tool_result' },
+    { tsMs: 4100, type: 'tool_result' },                         // parallel -> merges, same labels
+    { tsMs: 5000, type: 'assistant', tools: [] },                // inference, no tools
+  ]
+  const { segments } = buildSegments(events)
+  assert.deepEqual(segments, [
+    { kind: 'inference', startMs: 0, endMs: 1000, tools: [] },
+    { kind: 'tool', startMs: 1000, endMs: 4100, tools: ['Bash', 'Grep'] },
+    { kind: 'inference', startMs: 4100, endMs: 5000, tools: [] },
+  ])
 })
 
 test('buildSegments: parallel tool_results stay one merged tool span', () => {
@@ -35,9 +51,9 @@ test('buildSegments: parallel tool_results stay one merged tool span', () => {
   ]
   const { segments, inferenceMs, toolMs } = buildSegments(events)
   assert.deepEqual(segments, [
-    { kind: 'inference', startMs: 0, endMs: 500 },
-    { kind: 'tool', startMs: 500, endMs: 2100 },
-    { kind: 'inference', startMs: 2100, endMs: 3000 },
+    { kind: 'inference', startMs: 0, endMs: 500, tools: [] },
+    { kind: 'tool', startMs: 500, endMs: 2100, tools: [] },
+    { kind: 'inference', startMs: 2100, endMs: 3000, tools: [] },
   ])
   assert.equal(inferenceMs, 1400)
   assert.equal(toolMs, 1600)
