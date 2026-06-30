@@ -579,6 +579,10 @@ select.input {
   color: var(--gray-900);
   margin-right: 2px;
 }
+/* Clickable "view workflow source" affordance in a run's detail. */
+.wf-source-link { cursor: pointer; color: var(--blue); }
+.wf-source-link:hover { text-decoration: underline; }
+
 /* Metrics that carry a hover explanation (stat cards + rollup items). */
 .stat-card[title] { cursor: help; }
 .metric { cursor: help; border-bottom: 1px dotted var(--gray-600); }

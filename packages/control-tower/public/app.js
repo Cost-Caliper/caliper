@@ -1110,6 +1110,8 @@ function abbrevDir(cwd) {
 observedEls.list?.addEventListener('click', (e) => {
   const closeBtn = e.target.closest('[data-close-call]');
   if (closeBtn) { const slot = closeBtn.closest('.obs-call-detail'); if (slot) slot.hidden = true; return; }
+  const scriptEl = e.target.closest('[data-script]');
+  if (scriptEl) { openScriptDrawer(scriptEl.getAttribute('data-script')); return; }
   const callEl = e.target.closest('[data-call-idx]');
   if (callEl) {
     const item = callEl.closest('.obs-run-item'); if (!item) return;
@@ -1254,6 +1256,30 @@ function segmentDetailHtml(seg, c) {
   return head + decided + metricsRow + thinking
     + `<div style="font-size:11px;color:var(--gray-700);margin:8px 0 3px">Model output for this step</div>`
     + `<pre class="cd-pre cd-pre-tall">${esc(d.text || '(no text — this step only emitted a tool call)')}</pre>`;
+}
+// Open the workflow source for a run in the drawer: its name, on-disk path, and the
+// exact script the harness executed. (Browsers can't open a local file directly, so we
+// show the source + the path you can open in your editor.)
+async function openScriptDrawer(runId) {
+  const dr = document.getElementById('cd-drawer'); const scrim = document.getElementById('cd-scrim');
+  if (!dr) return;
+  const title = dr.querySelector('.cd-head strong'); if (title) title.textContent = 'Workflow source';
+  const body = dr.querySelector('.cd-body'); if (body) body.innerHTML = '<div class="muted" style="font-size:12px">Loading source…</div>';
+  dr.classList.add('open'); dr.setAttribute('aria-hidden', 'false'); if (scrim) scrim.hidden = false;
+  let d;
+  try { const res = await fetch(`/v1/observed/${encodeURIComponent(runId)}/script`); if (!res.ok) throw new Error('HTTP ' + res.status); d = await res.json(); }
+  catch (err) { if (body) body.innerHTML = `<div class="muted" style="font-size:12px">Could not load source: ${esc(err.message)}</div>`; return; }
+  if (!body) return;
+  const pathBlock = d.path
+    ? `<div style="font-size:11px;color:var(--gray-700);margin:0 0 3px">File <span class="muted">(open in your editor)</span></div>`
+      + `<pre class="cd-pre" style="white-space:pre-wrap;word-break:break-all">${esc(d.path)}</pre>`
+      + `<div style="margin:4px 0 10px"><a href="vscode://file${esc(d.path)}" style="font-size:11px;color:var(--blue)">Open in VS Code ↗</a></div>`
+    : '<div class="muted" style="font-size:11px;margin-bottom:8px">Inline workflow — no saved file path.</div>';
+  body.innerHTML =
+    `<div style="font-size:15px;color:var(--gray-1000);margin-bottom:8px"><span class="mono">${esc(d.name || runId)}</span></div>`
+    + pathBlock
+    + `<div style="font-size:11px;color:var(--gray-700);margin:6px 0 3px">Source <span class="muted">(${(d.source || '').length.toLocaleString()} chars)</span></div>`
+    + `<pre class="cd-pre" style="max-height:62vh;font-size:10.5px">${esc(d.source || '(source not recorded for this run)')}</pre>`;
 }
 function openCallDrawer(c, seg) {
   const dr = document.getElementById('cd-drawer'); const scrim = document.getElementById('cd-scrim');
@@ -1477,12 +1503,10 @@ function buildDetailHtml(run) {
   const r = tel.run || {};
   const calls = tel.calls || [];
 
-  const when = fmtWhen({ timestamp: run.timestamp, startedAt: run.startTime ? new Date(run.startTime).toISOString() : null });
-  const ctx = [
-    esc(when),
-    run.gitBranch ? esc(run.gitBranch) : '',
-    run.cwd ? `<span title="${esc(run.cwd)}">${esc(homeAbbrev(run.cwd))}</span>` : '',
-  ].filter(Boolean).join('<span class="obs-sub-sep"> · </span>');
+  // The run row already shows when · branch · dir, so don't repeat it here. Instead the
+  // detail leads with a link to the workflow's source (the script the harness ran).
+  const wfName = esc(run.meta?.name || run.runId || '');
+  const sourceLink = `<div class="obs-detail-context"><span class="wf-source-link" data-script="${esc(run.runId)}" title="View the workflow script (and its on-disk path) that produced this run">📄 ${wfName} — view workflow source</span></div>`;
 
   const stat = (n, label, desc) => `<div class="stat-card" title="${esc(desc)}"><div class="stat-n">${n}</div><div class="stat-label">${label}</div></div>`;
   const cards = '<div class="stat-cards stat-cards-sm">'
@@ -1494,7 +1518,7 @@ function buildDetailHtml(run) {
     + '</div>';
 
   return ''
-    + (ctx ? `<div class="obs-detail-context">${ctx}</div>` : '')
+    + sourceLink
     + cards
     + '<section style="margin:14px 0">'
     +   '<div style="font-size:13px;color:var(--gray-1000);margin-bottom:6px">Timeline <span style="color:var(--gray-900);font-size:11px">— each agent split into inference vs tool time, from real transcript timestamps</span></div>'

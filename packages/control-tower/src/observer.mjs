@@ -49,6 +49,22 @@ function parseTraceLine(line) {
 }
 
 // ── Parse a single wf_*.json run file ────────────────────────────────────────
+// The workflow script behind a run: its name, the on-disk path (scriptPath — a real
+// saved file when the run came from a named/saved workflow), and the exact source the
+// harness executed (embedded in the run record). Used by GET /v1/observed/:id/script.
+export function readRunScript(runId, sessDir) {
+  if (!/^[0-9a-f-]+$/i.test(String(runId))) return null // guard path traversal
+  const wfPath = join(sessDir, 'workflows', `wf_${runId}.json`)
+  if (!existsSync(wfPath)) return null
+  let raw
+  try { raw = JSON.parse(readFileSync(wfPath, 'utf8')) } catch { return null }
+  return {
+    name: raw.workflowName || runId,
+    path: raw.scriptPath || null,
+    source: typeof raw.script === 'string' ? raw.script : null,
+  }
+}
+
 export function parseRunJson(runId, sessDir) {
   const wfPath = join(sessDir, 'workflows', `wf_${runId}.json`)
   if (!existsSync(wfPath)) return null

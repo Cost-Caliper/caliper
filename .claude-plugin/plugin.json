@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "workflow-lens",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Visualize, instrument, budget, replay, and estimate Claude Code Workflow runs. Ships the workflow-lens CLI plus the Control Tower dashboard, which renders real Workflow runs as graphs, timelines, and cost/token telemetry.",
   "author": {
     "name": "Dennison Bertram"

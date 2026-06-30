@@ -29,7 +29,7 @@ import { executeRun } from './src/runner.mjs'
 import { extractEditableAgents, applyEdits } from './src/editor.mjs'
 import { deriveOptimizations } from './src/optimize.mjs'
 import { distillLearnings, groundingCheck } from '../workflow-lens/src/learnings.mjs'
-import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns } from './src/observer.mjs'
+import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns, readRunScript } from './src/observer.mjs'
 import { scanSubagentTree, reconstructSubagent } from './src/subagents.mjs'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -704,6 +704,18 @@ async function handle(req, res) {
   if (method === 'GET' && urlPath === '/v1/observed/stream') {
     observedChannel.attach(res)
     return
+  }
+
+  // ── GET /v1/observed/:runId/script — the workflow source + its on-disk path ───
+  {
+    const params = matchRoute(method, urlPath, 'GET /v1/observed/:runId/script')
+    if (params) {
+      if (!SESS) { jsonErr(res, 'NOT_CONFIGURED', 'WFLENS_SESSION_DIR is not set', 503); return }
+      const script = readRunScript(params.runId, SESS)
+      if (!script) { jsonErr(res, 'NOT_FOUND', `No script for run "${params.runId}"`, 404); return }
+      jsonOk(res, script)
+      return
+    }
   }
 
   // ── GET /v1/observed/:runId ───────────────────────────────────────────────
