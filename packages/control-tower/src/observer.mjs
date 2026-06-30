@@ -121,13 +121,15 @@ function parseJournal(journalPath) {
 // ── Inference-vs-tool segmentation ────────────────────────────────────────────
 // Partition an agent's transcript into spans of model inference vs tool execution.
 //
-// events: [{ tsMs, type:'prompt'|'assistant'|'tool_result', tools? }] ascending by ts.
-// Each inter-event gap is attributed by the event it leads INTO:
+// events: [{ tsMs, type:'prompt'|'assistant'|'tool_result', tools?, text?, toolUses?, results? }]
+// ascending by ts. Each inter-event gap is attributed by the event it leads INTO:
 //   • a gap ending at an `assistant` message  → the model was inferring
 //   • a gap ending at a `tool_result`         → a tool was executing
-// A tool span is labelled with the tool name(s) the most recent assistant turn
-// requested (assistant events may carry a `tools` name array). Adjacent same-kind
-// spans are merged (tool names unioned). startMs/endMs are relative to events[0].
+// Each segment also carries `detail` describing the SPECIFIC step, for click-through:
+//   • inference → { text, decided:[toolNames] }  (what the model produced/decided)
+//   • tool      → { calls:[{name, input, result}] } (each tool_use paired to its result by id)
+// A tool span is labelled with the tool name(s) the most recent assistant turn requested.
+// Adjacent same-kind spans are merged (tools/decided unioned, calls/text concatenated).
 export function buildSegments(events) {
   if (!Array.isArray(events) || events.length < 2) {
     return { segments: [], inferenceMs: 0, toolMs: 0 }
@@ -135,22 +137,45 @@ export function buildSegments(events) {
   const union = (a, b) => [...new Set([...(a || []), ...(b || [])])]
   const t0 = events[0].tsMs
   const segments = []
-  let pendingTools = [] // tools requested by the most recent assistant turn
+  let pendingTools = []        // tool names requested by the most recent assistant turn
+  let pendingToolUses = []     // [{id, name, input}] from that turn — paired to results by id
   for (let i = 1; i < events.length; i++) {
     const prev = events[i - 1]
-    if (prev.type === 'assistant' && Array.isArray(prev.tools) && prev.tools.length) {
-      pendingTools = prev.tools
+    const cur = events[i]
+    if (prev.type === 'assistant') {
+      if (Array.isArray(prev.tools) && prev.tools.length) pendingTools = prev.tools
+      if (Array.isArray(prev.toolUses) && prev.toolUses.length) pendingToolUses = prev.toolUses
     }
     const startMs = prev.tsMs - t0
-    const endMs = events[i].tsMs - t0
+    const endMs = cur.tsMs - t0
     if (endMs < startMs) continue // out-of-order guard
-    const kind = events[i].type === 'tool_result' ? 'tool' : 'inference'
+    const kind = cur.type === 'tool_result' ? 'tool' : 'inference'
+
+    let detail
+    if (kind === 'tool') {
+      const results = Array.isArray(cur.results) ? cur.results : []
+      const calls = results.map((r) => {
+        const tu = (r.id && pendingToolUses.find((u) => u.id === r.id))
+          || (pendingToolUses.length === 1 ? pendingToolUses[0] : null)
+        return { name: (tu && tu.name) || pendingTools[0] || 'tool', input: (tu && tu.input) ?? null, result: r.content ?? null }
+      })
+      detail = { calls }
+    } else {
+      detail = { text: cur.text || '', decided: Array.isArray(cur.toolUses) ? cur.toolUses.map((u) => u.name) : [] }
+    }
+
     const last = segments[segments.length - 1]
     if (last && last.kind === kind) {
       last.endMs = endMs
-      if (kind === 'tool') last.tools = union(last.tools, pendingTools)
+      if (kind === 'tool') {
+        last.tools = union(last.tools, pendingTools)
+        last.detail.calls.push(...detail.calls)
+      } else {
+        last.detail.text = [last.detail.text, detail.text].filter(Boolean).join('\n\n')
+        last.detail.decided = union(last.detail.decided, detail.decided)
+      }
     } else {
-      segments.push({ kind, startMs, endMs, tools: kind === 'tool' ? [...pendingTools] : [] })
+      segments.push({ kind, startMs, endMs, tools: kind === 'tool' ? [...pendingTools] : [], detail })
     }
   }
   let inferenceMs = 0
@@ -192,6 +217,21 @@ function parseAgentTranscript(transcriptPath) {
     typeof content === 'string' ? content
       : Array.isArray(content) ? content.filter((b) => b && b.type === 'text').map((b) => b.text || '').join('\n')
       : ''
+  // Per-step content caps keep the per-segment detail useful but bounded.
+  const trunc = (s, n) => (s == null ? null : String(s).length > n ? String(s).slice(0, n) + '…' : String(s))
+  const stringifyInput = (inp) => {
+    if (inp == null) return null
+    if (typeof inp === 'string') return inp
+    try { return JSON.stringify(inp, null, 2) } catch { return String(inp) }
+  }
+  const resultText = (content) => {
+    if (content == null) return ''
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+      return content.map((b) => (b && b.type === 'text') ? (b.text || '') : (b && b.type === 'image') ? '[image]' : '').filter(Boolean).join('\n')
+    }
+    return ''
+  }
 
   for (const line of lines) {
     let entry
@@ -202,7 +242,15 @@ function parseAgentTranscript(transcriptPath) {
     const tsMs = entry.timestamp ? new Date(entry.timestamp).getTime() : NaN
     if (entry.type === 'user') {
       const isToolResult = Array.isArray(msg.content) && msg.content.some((b) => b && b.type === 'tool_result')
-      if (!isNaN(tsMs)) events.push({ tsMs, type: isToolResult ? 'tool_result' : 'prompt' })
+      if (!isNaN(tsMs)) {
+        if (isToolResult) {
+          const results = msg.content.filter((b) => b && b.type === 'tool_result')
+            .map((b) => ({ id: b.tool_use_id || null, content: trunc(resultText(b.content), 4000) }))
+          events.push({ tsMs, type: 'tool_result', results })
+        } else {
+          events.push({ tsMs, type: 'prompt' })
+        }
+      }
       if (task === null) { const t = textOf(msg.content).trim(); if (t) task = t }
       continue
     }
@@ -214,13 +262,18 @@ function parseAgentTranscript(transcriptPath) {
     totalUsage.output_tokens += usage.output_tokens || 0
     totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0
     totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0
-    const turnTools = [] // tool names this assistant turn requested (labels the tool span)
+    const turnTools = []    // tool names this assistant turn requested (labels the tool span)
+    const turnToolUses = [] // [{id,name,input}] for pairing with tool_results
     if (Array.isArray(msg.content)) {
-      for (const b of msg.content) if (b && b.type === 'tool_use') { toolCalls++; if (b.name) { tools.add(b.name); turnTools.push(b.name) } }
+      for (const b of msg.content) if (b && b.type === 'tool_use') {
+        toolCalls++
+        if (b.name) { tools.add(b.name); turnTools.push(b.name) }
+        turnToolUses.push({ id: b.id || null, name: b.name || 'tool', input: trunc(stringifyInput(b.input), 4000) })
+      }
     }
-    if (!isNaN(tsMs)) events.push({ tsMs, type: 'assistant', tools: turnTools })
-    const txt = textOf(msg.content).trim()
-    if (txt) output = txt
+    const turnText = textOf(msg.content).trim()
+    if (!isNaN(tsMs)) events.push({ tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses })
+    if (turnText) output = turnText
     const ts = entry.timestamp || null
     if (ts) {
       if (!firstTimestamp) firstTimestamp = ts
@@ -228,9 +281,6 @@ function parseAgentTranscript(transcriptPath) {
     }
   }
 
-  // Generous caps: enough to show the full task/output in the detail drawer (which is
-  // scrollable) without bloating the run payload with pathologically large transcripts.
-  const trunc = (s, n) => (s == null ? null : s.length > n ? s.slice(0, n) + '…' : s)
   events.sort((a, b) => a.tsMs - b.tsMs)
   const { segments, inferenceMs, toolMs } = buildSegments(events)
   return {

@@ -1103,12 +1103,16 @@ observedEls.list?.addEventListener('click', (e) => {
     const run = runCache.get(item.dataset.runId);
     const c = run?.telemetry?.calls?.[Number(callEl.dataset.callIdx)];
     if (!c) return;
-    // Agent name (data-drill="inline") → full trace inline; bars/segments/rows → drawer.
+    // Agent name (data-drill="inline") → full subagent details inline.
+    // A specific graph segment (data-seg-idx) → that exact tool call / inference step.
+    // Anything else with a call idx (table row) → the call summary.
     if (callEl.getAttribute('data-drill') === 'inline') {
       const slot = item.querySelector('.obs-call-detail');
       if (slot) renderCallDetailInto(slot, c);
     } else {
-      openCallDrawer(c);
+      const segIdx = callEl.getAttribute('data-seg-idx');
+      const seg = segIdx != null ? (c.segments || [])[Number(segIdx)] : null;
+      openCallDrawer(c, seg);
     }
     return;
   }
@@ -1131,7 +1135,7 @@ function showSegTip(e, seg) {
   const dot = isTool ? SEG_COLOR.tool : SEG_COLOR.inference;
   tip.innerHTML = `<div class="tl-tip-head">${esc(label)}</div>`
     + `<div class="tl-tip-row"><span class="tl-tip-dot" style="background:${dot}"></span><span>${title}</span> · <span class="mono">${fmtMs(dur)}</span></div>`
-    + `<div class="tl-tip-hint">click to open details →</div>`;
+    + `<div class="tl-tip-hint">click for this ${isTool ? 'tool call' : 'inference step'} →</div>`;
   tip.hidden = false;
   positionSegTip(e);
 }
@@ -1182,10 +1186,41 @@ function callDetailHtml(c) {
     + `<div style="font-size:12px;color:var(--gray-900);margin:10px 0 4px">Output — its last assistant text</div>`
     + `<pre class="cd-pre cd-pre-tall">${esc(c.output || '(no text output — tool-only turn)')}</pre>`;
 }
-function openCallDrawer(c) {
+// Detail for ONE clicked segment: the specific tool call(s) or inference step.
+function segmentDetailHtml(seg, c) {
+  const dur = fmtMs((seg.endMs || 0) - (seg.startMs || 0));
+  const isTool = seg.kind === 'tool';
+  const dot = isTool ? SEG_COLOR.tool : SEG_COLOR.inference;
+  const head = `<div style="font-size:15px;color:var(--gray-1000);margin-bottom:2px"><span class="tier-dot" style="background:${esc(tierColor(c.tier))}"></span> ${esc(c.label || '')}</div>`
+    + `<div style="display:flex;align-items:center;gap:7px;margin-bottom:12px;font-size:13px;color:var(--gray-900)">`
+    + `<span class="tl-tip-dot" style="background:${dot}"></span>`
+    + `<strong style="color:var(--gray-1000)">${isTool ? 'Tool call' : 'Inference'}</strong> · <span class="mono">${dur}</span></div>`;
+  const d = seg.detail || {};
+  if (isTool) {
+    const calls = Array.isArray(d.calls) ? d.calls : [];
+    if (!calls.length) return head + `<div class="muted" style="font-size:12px">No tool-call payload captured for this span.</div>`;
+    const body = calls.map((call, n) => ''
+      + `<div style="font-size:13px;color:var(--gray-1000);margin:${n ? 14 : 0}px 0 4px"><span class="mono">${esc(call.name || 'tool')}</span></div>`
+      + `<div style="font-size:11px;color:var(--gray-700);margin:6px 0 3px">Input</div>`
+      + `<pre class="cd-pre">${esc(call.input != null ? String(call.input) : '(no input)')}</pre>`
+      + `<div style="font-size:11px;color:var(--gray-700);margin:8px 0 3px">Result</div>`
+      + `<pre class="cd-pre cd-pre-tall">${esc(call.result != null ? String(call.result) : '(no result captured)')}</pre>`
+    ).join('');
+    return head + body;
+  }
+  const decided = Array.isArray(d.decided) && d.decided.length
+    ? `<div style="font-size:12px;color:var(--gray-900);margin-bottom:8px">decided to call: <span class="mono" style="color:var(--gray-1000)">${esc(d.decided.join(', '))}</span></div>`
+    : '';
+  return head + decided
+    + `<div style="font-size:11px;color:var(--gray-700);margin:0 0 3px">Model output for this step</div>`
+    + `<pre class="cd-pre cd-pre-tall">${esc(d.text || '(no text — this step only emitted a tool call)')}</pre>`;
+}
+function openCallDrawer(c, seg) {
   const dr = document.getElementById('cd-drawer'); const scrim = document.getElementById('cd-scrim');
   if (!dr || !c) return;
-  const body = dr.querySelector('.cd-body'); if (body) body.innerHTML = callDetailHtml(c);
+  const title = dr.querySelector('.cd-head strong');
+  if (title) title.textContent = seg ? (seg.kind === 'tool' ? 'Tool call' : 'Inference step') : 'Call details';
+  const body = dr.querySelector('.cd-body'); if (body) body.innerHTML = seg ? segmentDetailHtml(seg, c) : callDetailHtml(c);
   dr.classList.add('open'); dr.setAttribute('aria-hidden', 'false');
   if (scrim) scrim.hidden = false;
 }
@@ -1361,7 +1396,7 @@ function buildDetailHtml(run) {
     +   '<div style="font-size:13px;color:var(--gray-1000);margin-bottom:6px">Timeline <span style="color:var(--gray-900);font-size:11px">— each agent split into inference vs tool time, from real transcript timestamps</span></div>'
     +   `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg(calls)}</div>`
     +   timelineLegend()
-    +   '<div class="muted" style="font-size:11px;margin-top:4px">Hover a segment to see what it is. Click an <strong>agent name</strong> for its full trace (below); click a <strong>bar</strong> or table row for quick details (right).</div>'
+    +   '<div class="muted" style="font-size:11px;margin-top:4px">Hover a segment to see what it is. Click a <strong>segment</strong> for that exact tool call / inference step (right); click an <strong>agent name</strong> for the full subagent details (below).</div>'
     + '</section>'
     + '<div class="obs-call-detail" hidden style="margin:14px 0;background:var(--gray-100);border:1px solid var(--border);border-radius:8px;padding:12px"></div>'
     + buildCallsTable(calls)
@@ -1416,17 +1451,17 @@ function buildTimelineSvg(calls) {
     let bar;
     if (segs.length && segTotal > 0) {
       // Map each segment's real-time offset proportionally onto the agent's bar.
-      bar = segs.map((s) => {
+      bar = segs.map((s, si) => {
         const f0 = (s.startMs - segs[0].startMs) / segTotal;
         const f1 = (s.endMs - segs[0].startMs) / segTotal;
         const sx = bx + f0 * bw;
         const sw = Math.max(1, (f1 - f0) * bw);
         const segTools = esc((s.tools || []).join(', '));
-        // data-seg-* feed the custom hover tooltip; data-call-idx opens the detail drawer.
-        return `<rect data-call-idx="${i}" data-seg-kind="${s.kind}" data-seg-dur="${(s.endMs - s.startMs).toFixed(0)}" data-seg-tools="${segTools}" data-seg-label="${esc(c.label || '')}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"></rect>`;
+        // data-seg-* feed the hover tooltip; data-seg-idx opens THAT step's detail.
+        return `<rect data-call-idx="${i}" data-seg-idx="${si}" data-seg-kind="${s.kind}" data-seg-dur="${(s.endMs - s.startMs).toFixed(0)}" data-seg-tools="${segTools}" data-seg-label="${esc(c.label || '')}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"></rect>`;
       }).join('');
-      // hairline frame so adjacent same-color runs still read as one bar
-      bar += `<rect data-call-idx="${i}" x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="2" fill="none" stroke="var(--border)" stroke-width="0.5" style="cursor:pointer"></rect>`;
+      // hairline frame so adjacent same-color runs still read as one bar (non-interactive)
+      bar += `<rect x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="2" fill="none" stroke="var(--border)" stroke-width="0.5" style="pointer-events:none"></rect>`;
     } else {
       // Fallback: no per-segment data → single tier-colored bar.
       bar = `<rect data-call-idx="${i}" x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="3" fill="${tierColor(c.tier)}" opacity="0.88" style="cursor:pointer"><title>${esc(c.label || '')} · ${fmtMs(c.ms)} · ${fmtUsd(c.costUsd)}</title></rect>`;

@@ -5,6 +5,9 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { buildSegments } from '../src/observer.mjs'
 
+// Project just the structural fields (segments also carry a `detail` payload).
+const structural = (segments) => segments.map(({ kind, startMs, endMs, tools }) => ({ kind, startMs, endMs, tools }))
+
 // A typical agentic loop: prompt -> infer -> tool_use(infer) -> tool runs -> infer.
 test('buildSegments: classifies inference vs tool and merges adjacent spans', () => {
   const events = [
@@ -16,7 +19,7 @@ test('buildSegments: classifies inference vs tool and merges adjacent spans', ()
   ]
   const { segments, inferenceMs, toolMs } = buildSegments(events)
 
-  assert.deepEqual(segments, [
+  assert.deepEqual(structural(segments), [
     { kind: 'inference', startMs: 0, endMs: 1200, tools: [] },
     { kind: 'tool', startMs: 1200, endMs: 5000, tools: [] },
     { kind: 'inference', startMs: 5000, endMs: 6000, tools: [] },
@@ -34,7 +37,7 @@ test('buildSegments: tool spans are labelled with the requesting turn\'s tool na
     { tsMs: 5000, type: 'assistant', tools: [] },                // inference, no tools
   ]
   const { segments } = buildSegments(events)
-  assert.deepEqual(segments, [
+  assert.deepEqual(structural(segments), [
     { kind: 'inference', startMs: 0, endMs: 1000, tools: [] },
     { kind: 'tool', startMs: 1000, endMs: 4100, tools: ['Bash', 'Grep'] },
     { kind: 'inference', startMs: 4100, endMs: 5000, tools: [] },
@@ -50,13 +53,33 @@ test('buildSegments: parallel tool_results stay one merged tool span', () => {
     { tsMs: 3000, type: 'assistant' },    // infer 900
   ]
   const { segments, inferenceMs, toolMs } = buildSegments(events)
-  assert.deepEqual(segments, [
+  assert.deepEqual(structural(segments), [
     { kind: 'inference', startMs: 0, endMs: 500, tools: [] },
     { kind: 'tool', startMs: 500, endMs: 2100, tools: [] },
     { kind: 'inference', startMs: 2100, endMs: 3000, tools: [] },
   ])
   assert.equal(inferenceMs, 1400)
   assert.equal(toolMs, 1600)
+})
+
+test('buildSegments: captures per-segment detail (tool input+result paired by id, inference text)', () => {
+  const events = [
+    { tsMs: 0, type: 'prompt' },
+    { tsMs: 1000, type: 'assistant', text: 'Let me check the files.', tools: ['Bash'], toolUses: [{ id: 'tu1', name: 'Bash', input: 'ls -la' }] },
+    { tsMs: 3000, type: 'tool_result', results: [{ id: 'tu1', content: 'file1\nfile2' }] },
+    { tsMs: 4000, type: 'assistant', text: 'Two files found.', tools: [], toolUses: [] },
+  ]
+  const { segments } = buildSegments(events)
+
+  assert.equal(segments[0].kind, 'inference')
+  assert.equal(segments[0].detail.text, 'Let me check the files.')
+  assert.deepEqual(segments[0].detail.decided, ['Bash'])
+
+  assert.equal(segments[1].kind, 'tool')
+  assert.deepEqual(segments[1].detail.calls, [{ name: 'Bash', input: 'ls -la', result: 'file1\nfile2' }])
+
+  assert.equal(segments[2].kind, 'inference')
+  assert.equal(segments[2].detail.text, 'Two files found.')
 })
 
 test('buildSegments: fewer than two events yields no segments', () => {
