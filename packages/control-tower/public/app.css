@@ -601,8 +601,50 @@ select.input {
   white-space: pre;
 }
 .code-block code { font: inherit; }
+
+/* Line-numbered code block (workflow source). The wrap is the scroller; the gutter
+   sticks to the left during horizontal scroll and scrolls vertically with the code. */
+.code-wrap {
+  display: flex;
+  align-items: stretch;
+  max-height: 62vh;
+  overflow: auto;
+  background: var(--bg-200);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.code-gutter {
+  position: sticky;
+  left: 0;
+  margin: 0;
+  padding: 12px 8px 12px 12px;
+  text-align: right;
+  color: var(--gray-600);
+  background: var(--bg-200);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre;
+  flex: 0 0 auto;
+}
+.code-src {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  tab-size: 2;
+  color: var(--gray-1000);
+  white-space: pre;
+  flex: 1 1 auto;
+}
+.code-src code { font: inherit; }
+
 .hl-kw      { color: #c586c0; }                 /* keywords */
 .hl-string  { color: #98c379; }                 /* strings + template literals */
+.hl-key     { color: #56b6c2; }                 /* JSON object keys */
 .hl-comment { color: var(--gray-600); font-style: italic; }
 .hl-num     { color: #d19a66; }                 /* numbers */
 .hl-type    { color: #e5c07b; }                 /* Capitalized identifiers (types/classes) */

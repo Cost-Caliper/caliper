@@ -1219,10 +1219,15 @@ function segmentDetailHtml(seg, c) {
         ? '<span style="color:var(--red,#ef4444);font-size:11px" title="The tool returned an error result (is_error)">✗ error</span>'
         : '<span style="color:var(--green,#10b981);font-size:11px" title="The tool returned successfully">✓ ok</span>';
       const size = call.resultLen ? `<span class="metric" title="Size of the tool's result (characters); the preview below may be truncated." style="border-bottom:none;font-size:10.5px;color:var(--gray-700)">${fmtNshort(call.resultLen)} chars</span>` : '';
+      const inputStr = call.input != null ? String(call.input) : '';
+      const inputT = inputStr.trim();
+      const inputHtml = (inputT.startsWith('{') || inputT.startsWith('['))
+        ? `<pre class="code-block">${highlightJson(inputStr)}</pre>`            // JSON args
+        : `<pre class="cd-pre">${esc(inputStr || '(no input)')}</pre>`;          // plain string arg
       return ''
         + `<div style="display:flex;align-items:center;gap:8px;margin:${n ? 14 : 0}px 0 4px"><span class="mono" style="font-size:13px;color:var(--gray-1000)">${esc(call.name || 'tool')}</span> ${status}</div>`
         + `<div style="font-size:11px;color:var(--gray-700);margin:6px 0 3px">Input</div>`
-        + `<pre class="cd-pre">${esc(call.input != null ? String(call.input) : '(no input)')}</pre>`
+        + inputHtml
         + `<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--gray-700);margin:8px 0 3px"><span>Result</span>${size}</div>`
         + `<pre class="cd-pre cd-pre-tall">${esc(call.result != null ? String(call.result) : '(no result captured)')}</pre>`;
     }).join('');
@@ -1281,6 +1286,31 @@ function highlightJs(src) {
   return out;
 }
 
+// JSON highlighter for tool inputs (object property keys vs string values vs literals).
+function highlightJson(src) {
+  const re = /("(?:\\.|[^"\\])*")(\s*:)?|(-?\b\d[\d.eE+-]*\b)|(\btrue\b|\bfalse\b|\bnull\b)|(\s+)|([\s\S])/g;
+  let out = '', m;
+  while ((m = re.exec(src)) !== null) {
+    if (m[1]) out += m[2]                   // a string immediately before ":" is a key
+      ? `<span class="hl-key">${esc(m[1])}</span>${esc(m[2])}`
+      : `<span class="hl-string">${esc(m[1])}</span>`;
+    else if (m[3]) out += `<span class="hl-num">${esc(m[3])}</span>`;
+    else if (m[4]) out += `<span class="hl-kw">${esc(m[4])}</span>`;
+    else if (m[5]) out += m[5];
+    else out += esc(m[6]);
+  }
+  return out;
+}
+
+// Wrap any source string in a line-numbered, optionally-highlighted code block.
+function codeBlockHtml(source, highlighter) {
+  const code = highlighter ? highlighter(source) : esc(source);
+  const lineCount = source.split('\n').length;
+  let gutter = '';
+  for (let i = 1; i <= lineCount; i++) gutter += (i > 1 ? '\n' : '') + i;
+  return `<div class="code-wrap"><pre class="code-gutter" aria-hidden="true">${gutter}</pre><pre class="code-src"><code>${code}</code></pre></div>`;
+}
+
 // Open the workflow source for a run in the drawer: its name, on-disk path, and the
 // exact script the harness executed. (Browsers can't open a local file directly, so we
 // show the source + the path you can open in your editor.)
@@ -1300,8 +1330,8 @@ async function openScriptDrawer(runId) {
       + `<div style="margin:4px 0 10px"><a href="vscode://file${esc(d.path)}" style="font-size:11px;color:var(--blue)">Open in VS Code ↗</a></div>`
     : '<div class="muted" style="font-size:11px;margin-bottom:8px">Inline workflow — no saved file path.</div>';
   const sourceHtml = d.source
-    ? `<pre class="code-block"><code>${highlightJs(d.source)}</code></pre>`
-    : '<pre class="code-block"><code>(source not recorded for this run)</code></pre>';
+    ? codeBlockHtml(d.source, highlightJs)
+    : codeBlockHtml('(source not recorded for this run)');
   body.innerHTML =
     `<div style="font-size:15px;color:var(--gray-1000);margin-bottom:8px"><span class="mono">${esc(d.name || runId)}</span></div>`
     + pathBlock
