@@ -569,6 +569,10 @@ select.input {
   align-items: center;
   margin: 4px 0 0;
 }
+/* Secondary context (branches · session) stays out of the way until you hover the line. */
+.project-context .ctx-more { opacity: 0; transition: opacity .15s ease; }
+.project-context:hover .ctx-more, .project-context:focus-within .ctx-more { opacity: 1; }
+@media (hover: none) { .project-context .ctx-more { opacity: 1; } }
 .obs-filter-label {
   font-size: 12px;
   font-weight: 500;

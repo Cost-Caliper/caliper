@@ -1292,7 +1292,16 @@ async function populateObsContext(runs) {
     branches.length === 1 ? `branch ${esc(branches[0])}` : branches.length > 1 ? `${branches.length} branches` : '',
     sessionShort ? `session ${esc(sessionShort)}` : '',
   ].filter(Boolean);
-  el.innerHTML = parts.join('<span class="obs-sub-sep"> · </span>');
+  el.innerHTML = projectContextHtml(parts);
+}
+
+// Project-context line: parts[0] (the project dir) is always shown; the rest
+// (branches · session) collapse into a .ctx-more span that fades in on hover.
+function projectContextHtml(parts) {
+  if (!parts.length) return '';
+  const sep = '<span class="obs-sub-sep"> · </span>';
+  const more = parts.slice(1);
+  return parts[0] + (more.length ? `<span class="ctx-more">${sep}${more.join(sep)}</span>` : '');
 }
 
 function applyObservedFilters() {
@@ -1881,7 +1890,7 @@ function renderSubHeader(data) {
       data?.gitBranch ? `branch ${esc(data.gitBranch)}` : '',
       data?.sessionId ? `session ${esc(String(data.sessionId).slice(0, 8))}` : '',
     ].filter(Boolean);
-    ctx.innerHTML = bits.join('<span class="obs-sub-sep"> · </span>');
+    ctx.innerHTML = projectContextHtml(bits);
   }
   const r = data?.rollup;
   if (roll) {
