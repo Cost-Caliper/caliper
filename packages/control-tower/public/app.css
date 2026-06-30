@@ -961,6 +961,7 @@ select.input {
   margin: 10px 0 0;
   flex-wrap: wrap;
 }
+.obs-filter-bar[hidden] { display: none; } /* let the `hidden` attr win over display:flex */
 .obs-filter {
   display: flex;
   align-items: center;

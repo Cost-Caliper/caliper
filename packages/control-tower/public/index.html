@@ -339,10 +339,14 @@
     </div>
 
     <!-- Empty state -->
-    <div id="observed-empty" class="empty-state observed-empty-state" aria-live="polite">
-      <p class="muted">Run a workflow in this session to observe it here.</p>
-      <p class="label-13 muted">The bridge tails <code>wf_*.json</code> and <code>agent-*.jsonl</code> from the harness session dir.<br>
-         Set <code>WFLENS_SESSION_DIR</code> if the list is empty.</p>
+    <div id="observed-empty" class="ct-empty" aria-live="polite">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/>
+        <path d="M6 8.2v3.3a2 2 0 0 0 2 2h2M18 8.2v3.3a2 2 0 0 1-2 2h-2"/>
+      </svg>
+      <div class="ct-empty-title">No workflow runs yet</div>
+      <div class="ct-empty-sub">Run a Workflow in this session and it’ll appear here automatically — with a per-agent timeline, cost, and tool/inference breakdown.</div>
+      <div class="ct-empty-hint" id="observed-empty-hint"></div>
     </div>
 
     <!-- Run list -->
@@ -413,6 +417,13 @@
   .cd-body{padding:14px 16px;overflow:auto;flex:1 1 auto}
   .cd-pre{background:var(--bg-200);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;color:var(--gray-1000);margin:0}
   .cd-pre-tall{max-height:46vh}
+  /* Shared tidy empty state (Workflows + Subagents) */
+  .ct-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:44px 20px;gap:5px}
+  .ct-empty svg{opacity:.4;margin-bottom:6px}
+  .ct-empty-title{font-size:14px;color:var(--gray-1000);font-weight:500}
+  .ct-empty-sub{font-size:12.5px;color:var(--gray-900);max-width:400px;line-height:1.55}
+  .ct-empty-hint{font-size:11px;color:var(--gray-700);margin-top:4px}
+  .ct-empty-hint code{font-size:10.5px}
 </style>
 <div id="tl-tip" class="tl-tip" hidden></div>
 <div id="cd-scrim" class="cd-scrim" hidden></div>

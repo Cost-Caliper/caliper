@@ -1272,9 +1272,11 @@ function applyObservedFilters() {
     renderObservedList(filtered);
   }
   if (obsFilterEls.count) {
-    obsFilterEls.count.textContent = (b === 'all' && d === 'all')
-      ? `${observedRuns.length} run${observedRuns.length === 1 ? '' : 's'}`
-      : `${filtered.length} of ${observedRuns.length} runs`;
+    obsFilterEls.count.textContent = !observedRuns.length
+      ? ''
+      : (b === 'all' && d === 'all')
+        ? `${observedRuns.length} run${observedRuns.length === 1 ? '' : 's'}`
+        : `${filtered.length} of ${observedRuns.length} runs`;
   }
 }
 
@@ -1296,6 +1298,8 @@ function renderObservedList(runs) {
   if (!runs || !runs.length) {
     observedEls.list.innerHTML = '';
     observedEls.empty.style.display = '';
+    if (obsFilterEls.bar) obsFilterEls.bar.hidden = true;       // no clutter when empty
+    if (obsFilterEls.count) obsFilterEls.count.textContent = '';
     return;
   }
   observedEls.empty.style.display = 'none';
@@ -1327,9 +1331,34 @@ async function loadObservedList() {
     observedRuns = runs;
     populateObservedFilters(runs);
     applyObservedFilters();
+    if (!runs.length) setWatchingHint('observed-empty-hint');
   } catch (err) {
     observedEls.list.innerHTML = `<p class="muted" style="padding:12px">Could not load observed runs: ${esc(err.message)}</p>`;
   }
+}
+
+// Tell the user which session dir the dashboard is watching (or that none is set).
+async function setWatchingHint(elId) {
+  const el = document.getElementById(elId); if (!el) return;
+  try {
+    const h = await apiFetch('/v1/health');
+    const dir = h?.bridge?.sessionDir;
+    el.innerHTML = dir
+      ? `Watching <code>${esc(homeAbbrev(dir))}</code>`
+      : 'Not watching a session — set <code>WFLENS_SESSION_DIR</code>.';
+  } catch { el.textContent = ''; }
+}
+
+// Shared tidy empty-state block (matches the static Workflows empty state).
+function ctEmptyHtml(title, sub, hintHtml) {
+  return '<div class="ct-empty">'
+    + '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/>'
+    + '<path d="M6 8.2v3.3a2 2 0 0 0 2 2h2M18 8.2v3.3a2 2 0 0 1-2 2h-2"/></svg>'
+    + `<div class="ct-empty-title">${esc(title)}</div>`
+    + `<div class="ct-empty-sub">${esc(sub)}</div>`
+    + (hintHtml ? `<div class="ct-empty-hint">${hintHtml}</div>` : '')
+    + '</div>';
 }
 
 function traceChipClass(ev) {
@@ -1629,8 +1658,12 @@ async function loadSubagentTree() {
   subForest = data;
   renderSubHeader(data);
   if (!data || !data.root || !data.rollup || data.rollup.totalSubagents === 0) {
-    const why = (data && data.sessionId) ? 'No direct subagents in this session.' : 'Set WFLENS_SESSION_DIR to a session dir.';
-    wrap.innerHTML = `<p class="muted" style="padding:12px;font-size:12px">${why} (Subagents spawned inside Workflows show in the Observe tab.)</p>`;
+    const hint = data?.cwd ? `Watching <code>${esc(homeAbbrev(data.cwd))}</code>` : (data?.sessionId ? '' : 'Set <code>WFLENS_SESSION_DIR</code> to a session dir.');
+    wrap.innerHTML = ctEmptyHtml(
+      'No subagents in this session',
+      'Subagents you launch with the Task/Agent tool appear here as a parent → child tree. (Subagents spawned inside a Workflow show under the Workflows tab.)',
+      hint,
+    );
     return;
   }
   // Default expand: MAIN + roots + their direct children visible; deeper subtrees collapsed.
@@ -1684,6 +1717,7 @@ function subRowHtml(node) {
     + `<td class="num mono">${fmtUsd(node.costUsd || 0)}</td>`
     + `<td class="num mono">${fmtN(node.tokens?.in || 0)}/${fmtN(node.tokens?.out || 0)}</td>`
     + `<td class="num mono" title="${esc((node.tools || []).join(', '))}">${node.toolCalls || 0}</td>`
+    + `<td class="mono" style="font-size:11px;white-space:nowrap" title="${esc(node.startedAt || '')}">${esc(fmtWhen({ startedAt: node.startedAt }))}</td>`
     + '</tr>';
 }
 
@@ -1705,7 +1739,7 @@ function renderSubTable() {
   const head = '<thead><tr>'
     + '<th style="text-align:left">Agent</th><th style="text-align:left">Type</th><th style="text-align:left">Status</th>'
     + '<th class="num">Children</th><th style="text-align:left">Model</th><th class="num">Duration</th>'
-    + '<th class="num">Cost</th><th class="num">Tok I/O</th><th class="num">Tools</th>'
+    + '<th class="num">Cost</th><th class="num">Tok I/O</th><th class="num">Tools</th><th style="text-align:left">Started</th>'
     + '</tr></thead>';
   wrap.innerHTML = `<div class="call-table-wrap"><table class="call-table" aria-label="Subagents">${head}<tbody>${rows.join('')}</tbody></table></div>`;
 }
