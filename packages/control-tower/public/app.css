@@ -1378,3 +1378,67 @@ select.input {
 .node-canvas.nested.hovering .sedge.hl {
   opacity: 1;
 }
+
+/* DEMO: Session Insight card — plain-language readout + "where the cost went" leaderboard. */
+.session-insight-card {
+  margin: 10px 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-100);
+  padding: 12px 14px;
+}
+.si-headline { font-size: 13px; color: var(--gray-700); margin-bottom: 12px; line-height: 1.5; }
+.si-lb-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--gray-700); margin-bottom: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.si-legend { text-transform: none; letter-spacing: 0; font-size: 11px; color: var(--gray-700); display: inline-flex; gap: 10px; flex-wrap: wrap; }
+.si-lg { display: inline-flex; align-items: center; gap: 4px; }
+.si-lg-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.si-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) 2.6fr 52px 34px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 4px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.si-row:hover { background: var(--gray-200); }
+.si-label { font-size: 12px; color: var(--gray-1000); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.si-bar { height: 9px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.si-bar-stack { display: flex; height: 100%; border-radius: 4px; overflow: hidden; }
+.si-seg { display: block; height: 100%; opacity: .92; }
+.si-cost { font-size: 12px; font-family: var(--font-mono); color: var(--gray-1000); text-align: right; }
+.si-share { font-size: 11px; font-family: var(--font-mono); color: var(--gray-700); text-align: right; }
+.si-more { font-size: 11px; color: var(--gray-700); padding: 4px 4px 0; }
+.si-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.si-chip { border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; min-width: 96px; background: var(--gray-100); }
+.si-chip-k { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--gray-700); }
+.si-chip-v { font-size: 16px; font-family: var(--font-mono); color: var(--gray-1000); margin-top: 2px; }
+.si-chip-s { font-size: 10px; color: var(--gray-700); margin-top: 1px; }
+.si-foot { font-size: 11px; margin-top: 10px; }
+.si-foot em { font-style: italic; color: var(--gray-900); }
+
+/* Potential-savings chip + panel (hypothetical OSS re-pricing) */
+.si-chip-save { border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
+.si-chip-save .si-chip-v { color: var(--green); }
+.si-chip-warn { border-color: color-mix(in srgb, var(--amber) 45%, var(--border)); }
+.si-chip-warn .si-chip-v { color: var(--amber); }
+.si-save { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.si-srow {
+  display: grid;
+  grid-template-columns: 10px minmax(180px, 1.4fr) 56px 16px 56px 90px;
+  align-items: center; gap: 8px; padding: 3px 4px; font-size: 12px;
+}
+.si-slabel { color: var(--gray-1000); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.si-sfrom { font-family: var(--font-mono); color: var(--gray-700); text-align: right; text-decoration: line-through; }
+.si-sarrow { color: var(--gray-700); text-align: center; }
+.si-sto { font-family: var(--font-mono); color: var(--gray-1000); text-align: right; }
+.si-ssave { font-family: var(--font-mono); text-align: right; }
+.si-ssave.pos { color: var(--green); }
+.si-ssave.neg { color: var(--amber); }
+.si-stotal { font-size: 12.5px; color: var(--gray-900); margin: 8px 4px 4px; }
+.si-stotal strong { color: var(--gray-1000); font-family: var(--font-mono); }

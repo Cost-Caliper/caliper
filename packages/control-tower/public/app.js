@@ -2220,6 +2220,20 @@ async function loadSessionWaterfall() {
   lastSession = { workflows, sub };
   renderSessionHeader(workflows, sub);
   renderSessionView();
+  // Fetch per-workflow agent-call detail once (per-model cost), then enrich the insight bars.
+  loadWfDetails().then((d) => { if (lastSession && lastSession.workflows) renderSessionInsight(lastSession.workflows, lastSession.sub, d); });
+}
+// Fetch + cache each workflow's /v1/observed/:id (has telemetry.calls with per-call model+cost).
+// Shared by the nested node view and the session insight's per-model bar segmentation.
+async function loadWfDetails() {
+  if (!lastSession) return new Map();
+  if (lastSession.wfDetails) return lastSession.wfDetails;
+  const token = lastSession;
+  const entries = await Promise.all((lastSession.workflows || []).map((w) =>
+    apiFetch(`/v1/observed/${encodeURIComponent(w.runId)}`).then((d) => [w.runId, d]).catch(() => [w.runId, null])));
+  if (lastSession !== token) return lastSession.wfDetails || new Map();
+  lastSession.wfDetails = new Map(entries);
+  return lastSession.wfDetails;
 }
 async function renderSessionView() {
   const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap || !lastSession) return;
@@ -2231,10 +2245,8 @@ async function renderSessionView() {
   if (!lastSession.wfDetails) {
     wrap.innerHTML = '<p class="muted" style="padding:12px;font-size:12px">Loading nested graph…</p>';
     const token = lastSession;
-    const entries = await Promise.all((workflows || []).map((w) =>
-      apiFetch(`/v1/observed/${encodeURIComponent(w.runId)}`).then((d) => [w.runId, d]).catch(() => [w.runId, null])));
+    await loadWfDetails();
     if (lastSession !== token || sessionView !== 'nodes') return; // session reloaded / view switched while awaiting
-    lastSession.wfDetails = new Map(entries);
   }
   wrap.innerHTML = buildSessionNodesSvg(workflows, sub, lastSession.wfDetails);
   requestAnimationFrame(applySessionNodeZoom); // fit to start
@@ -2456,7 +2468,176 @@ function renderSessionHeader(workflows, sub) {
     const totalCost = (workflows || []).reduce((s, w) => s + (w.costUsd || 0), 0) + (sub?.rollup?.totalCostUsd || 0);
     roll.textContent = `${wf} workflow${wf === 1 ? '' : 's'} · ${subN} direct subagent${subN === 1 ? '' : 's'} · ${fmtUsdShort(totalCost)} total`;
   }
+  renderSessionInsight(workflows, sub);
 }
+
+// DEMO: turn the bland rollup line into a plain-language readout — what happened and,
+// above all, WHERE THE ESTIMATED COST WENT (a Pareto leaderboard). Pure client-side from
+// data we already fetch (/v1/observed + /v1/subagents). This is the "structure → meaning" idea.
+function siDur(ms) {
+  if (!ms || ms < 0) return null;
+  const s = ms / 1000, h = s / 3600, d = h / 24;
+  if (d >= 1) return `${Math.floor(d)}d ${Math.round(h % 24)}h`;
+  if (h >= 1) return `${Math.floor(h)}h ${Math.round((h % 1) * 60)}m`;
+  if (s >= 60) return `${Math.round(s / 60)}m`;
+  return `${Math.round(s)}s`;
+}
+const MODEL_ORDER = ['opus', 'sonnet', 'haiku', 'other'];
+function modelTier(m) { m = String(m || '').toLowerCase(); return m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other'; }
+function modelColor(tier) { return tier === 'other' ? '#8a8f98' : tierColor(tier); }
+// Per-item cost split by model: {opus: $, sonnet: $, ...}. Workflows need their fetched
+// telemetry.calls; subagents carry a single model. Returns null if a workflow's detail
+// isn't loaded yet (→ render a plain bar until it arrives).
+function itemModelSplit(item, wfDetails) {
+  const m = {};
+  if (item.kind === 'subagent') { if (item.cost) m[modelTier(item.model)] = item.cost; return m; }
+  const det = wfDetails && wfDetails.get(item.navId);
+  const calls = det && det.telemetry && det.telemetry.calls;
+  if (!calls) return null; // not loaded yet
+  for (const c of calls) { const t = modelTier(c.model || c.tier); m[t] = (m[t] || 0) + (c.costUsd || 0); }
+  return m;
+}
+// Open-source substitutes per Anthropic tier — OpenRouter list price ($ per MILLION tokens),
+// captured live 2026-07-01. Used only for the hypothetical "potential savings" estimate.
+const SUBSTITUTE = {
+  opus: { name: 'GLM-5.2', or: 'z-ai/glm-5.2', prompt: 0.93, completion: 3.00 },
+  sonnet: { name: 'DeepSeek V4 Flash', or: 'deepseek/deepseek-v4-flash', prompt: 0.098, completion: 0.196 },
+  haiku: { name: 'GLM-4.7 Flash', or: 'z-ai/glm-4.7-flash', prompt: 0.06, completion: 0.40 },
+};
+const SUBSTITUTE_ASOF = '2026-07-01';
+// Aggregate real token usage per tier (input/output/cache) across workflow calls + direct
+// subagents — needed to re-price under a substitute model. Skips workflows without loaded detail.
+function sessionTierUsage(workflows, sub, wfDetails) {
+  const t = {};
+  const add = (tier, inp, out, cw, cr, cost) => {
+    const x = t[tier] || (t[tier] = { input: 0, output: 0, cacheWr: 0, cacheRd: 0, cost: 0 });
+    x.input += inp || 0; x.output += out || 0; x.cacheWr += cw || 0; x.cacheRd += cr || 0; x.cost += cost || 0;
+  };
+  for (const w of (workflows || [])) {
+    const det = wfDetails && wfDetails.get(w.runId);
+    const calls = det && det.telemetry && det.telemetry.calls;
+    if (!calls) continue;
+    for (const c of calls) add(modelTier(c.model || c.tier), c.inTok, c.outTok, c.cacheCreationTok, c.cacheReadTok, c.costUsd);
+  }
+  for (const c of ((sub && sub.root && sub.root.children) || [])) {
+    const tk = c.tokens || {}; add(modelTier(c.model), tk.in, tk.out, tk.cacheWr, tk.cacheRd, c.costUsd);
+  }
+  return t;
+}
+// Hypothetical re-pricing of the session at OSS list prices. Conservative: cache tokens are
+// billed at the substitute's flat prompt price (no cache discount assumed).
+function computeSavings(workflows, sub, wfDetails) {
+  const usage = sessionTierUsage(workflows, sub, wfDetails);
+  const lines = []; let cur = 0, alt = 0;
+  for (const tier of ['opus', 'sonnet', 'haiku']) {
+    const u = usage[tier], s = SUBSTITUTE[tier];
+    if (!u || !s || !u.cost) continue;
+    const promptTok = u.input + u.cacheWr + u.cacheRd;
+    const subCost = (promptTok * s.prompt + u.output * s.completion) / 1e6;
+    cur += u.cost; alt += subCost;
+    lines.push({ tier, sub: s, cur: u.cost, subCost, save: u.cost - subCost });
+  }
+  if (!lines.length) return null;
+  return { lines, cur, alt, save: cur - alt, pct: cur > 0 ? Math.round((cur - alt) / cur * 100) : 0 };
+}
+function renderSessionInsight(workflows, sub, wfDetails) {
+  const host = document.getElementById('session-insight'); if (!host) return;
+  const items = [];
+  for (const w of (workflows || [])) {
+    const s = w.startedAt ? Date.parse(w.startedAt) : (w.timestamp && w.durationMs ? Date.parse(w.timestamp) - w.durationMs : 0);
+    const e = w.timestamp ? Date.parse(w.timestamp) : (s + (w.durationMs || 0));
+    items.push({ label: w.name || w.runId, kind: 'workflow', cost: w.costUsd || 0, meta: `${w.agentCount || 0} agents`, navKind: 'wf', navId: w.runId, startMs: s, endMs: e });
+  }
+  for (const c of ((sub && sub.root && sub.root.children) || [])) {
+    const s = c.startedAtMs || (c.startedAt ? Date.parse(c.startedAt) : 0);
+    const e = c.endedAt ? Date.parse(c.endedAt) : (s + (c.ms || 0));
+    items.push({ label: c.description || c.agentId, kind: 'subagent', cost: c.costUsd || 0, meta: c.agentType || 'subagent', navKind: 'sub', navId: c.agentId, model: c.model, startMs: s, endMs: e });
+  }
+  if (!items.length) { host.innerHTML = ''; return; }
+  const total = items.reduce((a, b) => a + b.cost, 0) || 1;
+  const wfCount = items.filter((i) => i.kind === 'workflow').length;
+  const subCount = items.length - wfCount;
+  const wfCost = items.filter((i) => i.kind === 'workflow').reduce((a, b) => a + b.cost, 0);
+  const subCost = total - wfCost;
+  const starts = items.map((i) => i.startMs).filter(Boolean);
+  const ends = items.map((i) => i.endMs).filter(Boolean);
+  const span = (starts.length && ends.length) ? Math.max(...ends) - Math.min(...starts) : 0;
+  const ranked = [...items].sort((a, b) => b.cost - a.cost);
+  const maxCost = ranked[0].cost || 1;
+  const pct = (c) => Math.round((c / total) * 100);
+  const TOP = 5;
+  const top = ranked.slice(0, TOP), rest = ranked.slice(TOP);
+  let cum = 0, paretoN = 0; for (const i of ranked) { cum += i.cost; paretoN++; if (cum / total >= 0.6) break; }
+
+  // Session-wide cost by model (across every item whose split is known).
+  const modelTotals = {}; let modelKnown = 0;
+  for (const it of items) { const sp = itemModelSplit(it, wfDetails); if (sp) { for (const [t, c] of Object.entries(sp)) modelTotals[t] = (modelTotals[t] || 0) + c; modelKnown += it.cost; } }
+  const modelsPresent = MODEL_ORDER.filter((t) => modelTotals[t]);
+  const legend = modelsPresent.length
+    ? `<span class="si-legend">by model: ${modelsPresent.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} ${fmtUsdShort(modelTotals[t])} (${Math.round(modelTotals[t] / modelKnown * 100)}%)</span>`).join('')}</span>`
+    : (wfCount ? '<span class="si-legend muted">computing model split…</span>' : '');
+
+  const spanTxt = siDur(span);
+  const headline = `<span style="color:var(--gray-1000)">${wfCount} workflow${wfCount === 1 ? '' : 's'}</span> and `
+    + `<span style="color:var(--gray-1000)">${subCount} subagent${subCount === 1 ? '' : 's'}</span> · `
+    + `<span style="color:var(--gray-1000)">${fmtUsdShort(total)} estimated</span>${spanTxt ? ` · spanned ${spanTxt}` : ''} · `
+    + `the top <span style="color:var(--gray-1000)">${paretoN}</span> account for ~60% of the spend`;
+
+  // Bar = width by cost share of the biggest item; internally segmented by model.
+  const barHtml = (i) => {
+    const w = Math.max(3, Math.round((i.cost / maxCost) * 100));
+    const split = itemModelSplit(i, wfDetails);
+    let inner;
+    if (split && Object.keys(split).length) {
+      inner = MODEL_ORDER.filter((t) => split[t]).map((t) =>
+        `<span class="si-seg" style="flex:${split[t].toFixed(4)};background:${modelColor(t)}" title="${t} · ${fmtUsd(split[t])}"></span>`).join('');
+    } else {
+      inner = `<span class="si-seg" style="flex:1;background:#6366f1"></span>`; // pre-detail fallback
+    }
+    return `<span class="si-bar"><span class="si-bar-stack" style="width:${w}%">${inner}</span></span>`;
+  };
+  const rows = top.map((i) => `<button class="si-row" type="button" data-nav-kind="${i.navKind}" data-nav-id="${esc(i.navId)}" title="${esc(i.label)} · ${esc(i.meta)} · ${fmtUsd(i.cost)}">`
+    + `<span class="si-label">${esc(truncTxt(i.label, 30))}</span>`
+    + barHtml(i)
+    + `<span class="si-cost">${fmtUsdShort(i.cost)}</span>`
+    + `<span class="si-share">${pct(i.cost)}%</span></button>`).join('');
+  const moreCost = rest.reduce((a, b) => a + b.cost, 0);
+  const more = rest.length ? `<div class="si-more">+ ${rest.length} more · ${fmtUsdShort(moreCost)} (${pct(moreCost)}%)</div>` : '';
+
+  const chip = (label, val, sub2, cls) => `<div class="si-chip${cls ? ' ' + cls : ''}"><div class="si-chip-k">${label}</div><div class="si-chip-v">${val}</div>${sub2 ? `<div class="si-chip-s">${sub2}</div>` : ''}</div>`;
+  const biggest = ranked[0];
+  const savings = computeSavings(workflows, sub, wfDetails);
+  let chips = chip('Workflows', fmtUsdShort(wfCost), `${pct(wfCost)}% of spend`)
+    + chip('Subagents', fmtUsdShort(subCost), `${pct(subCost)}% of spend`)
+    + chip('Biggest single', fmtUsdShort(biggest.cost), esc(truncTxt(biggest.label, 22)));
+  if (savings) chips += chip('Potential savings', fmtUsdShort(savings.save), `${savings.pct}% at OSS prices`, savings.save > 0 ? 'si-chip-save' : 'si-chip-warn');
+
+  // "What if we ran open-source models instead" panel — hypothetical, clearly labelled.
+  let savePanel = '';
+  if (savings) {
+    const srow = (l) => `<div class="si-srow"><span class="si-lg-dot" style="background:${modelColor(l.tier)}"></span>`
+      + `<span class="si-slabel">${l.tier} → ${esc(l.sub.name)}</span>`
+      + `<span class="si-sfrom">${fmtUsdShort(l.cur)}</span><span class="si-sarrow">→</span><span class="si-sto">${fmtUsdShort(l.subCost)}</span>`
+      + `<span class="si-ssave ${l.save >= 0 ? 'pos' : 'neg'}">${l.save >= 0 ? 'save ' : '+'} ${fmtUsdShort(Math.abs(l.save))}</span></div>`;
+    savePanel = `<div class="si-save">`
+      + `<div class="si-lb-title">Potential savings — swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF} · hypothetical</span></div>`
+      + savings.lines.map(srow).join('')
+      + `<div class="si-stotal">≈ <strong>${fmtUsdShort(savings.alt)}</strong> instead of <strong>${fmtUsdShort(savings.cur)}</strong> on these tiers — save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%)</div>`
+      + `<div class="si-foot muted">Illustrative only: assumes the <em>same token counts</em> at OpenRouter list prices, with <em>no cache discount</em> on the substitute (real savings likely higher — OSS providers cache too). Ignores any quality/capability difference between models.</div></div>`;
+  }
+
+  host.innerHTML = `<div class="session-insight-card">`
+    + `<div class="si-headline">${headline}</div>`
+    + `<div class="si-chips">${chips}</div>`
+    + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${rows}${more}</div>`
+    + savePanel
+    + `<div class="si-foot muted">$ = cache-aware <em>estimate</em>, not billed · bars split by model · shares are of the items shown here · click a bar to open it</div></div>`;
+}
+document.getElementById('session-insight')?.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-nav-kind]'); if (!el) return;
+  const kind = el.getAttribute('data-nav-kind'), id = el.getAttribute('data-nav-id');
+  if (kind === 'wf') navigateToRun(id); else navigateToSubagent(id);
+});
 
 function buildSessionWaterfallSvg(workflows, sub) {
   const items = [];
