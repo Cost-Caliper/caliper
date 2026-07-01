@@ -2225,6 +2225,7 @@ function renderSessionView() {
   const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap || !lastSession) return;
   const { workflows, sub } = lastSession;
   wrap.innerHTML = sessionView === 'nodes' ? buildSessionNodesSvg(workflows, sub) : buildSessionWaterfallSvg(workflows, sub);
+  if (sessionView === 'nodes') requestAnimationFrame(applySessionNodeZoom); // fit + center to start
 }
 // Build the merged item list once (used by both the waterfall and the node view).
 function sessionItems(workflows, sub) {
@@ -2281,10 +2282,38 @@ function buildSessionNodesSvg(workflows, sub) {
     + `<circle cx="${padX + 11}" cy="${(rootY + 14).toFixed(1)}" r="4" fill="var(--gray-700)"/>`
     + `<text x="${padX + 22}" y="${(rootY + 17).toFixed(1)}" style="font-size:11px;font-weight:600;fill:var(--gray-1000)">main session</text>`
     + `<text x="${padX + 11}" y="${(rootY + 30).toFixed(1)}" style="font-size:9px;fill:var(--gray-700)">${items.length} launched</text></g>`;
-  const svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" style="max-width:100%;height:auto;font-family:ui-monospace,monospace">${edges.join('')}${rootBox}${boxes.join('')}</svg>`;
-  return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px">${svg}</div>`
+  const svg = `<svg viewBox="0 0 ${W} ${H}" data-w="${W}" data-h="${H}" width="${W}" style="height:auto;font-family:ui-monospace,monospace">${edges.join('')}${rootBox}${boxes.join('')}</svg>`;
+  const zoombar = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">`
+    + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="out" aria-label="Zoom out">−</button>`
+    + `<span id="node-zoom-label" class="mono" style="font-size:11px;color:var(--gray-700);min-width:42px;text-align:center"></span>`
+    + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="in" aria-label="Zoom in">+</button>`
+    + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="fit">Fit</button>`
+    + `<span class="muted" style="font-size:11px;margin-left:6px">${items.length} nodes · scroll to pan, ⌘/Ctrl+scroll to zoom</span></div>`;
+  return zoombar
+    + `<div class="node-canvas" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:10px;display:flex;justify-content:safe center;align-items:safe center">${svg}</div>`
     + sessionLegend()
-    + '<div class="muted" style="font-size:11px;margin-top:6px">The main session (left) and everything it launched, newest work downward. Click a node to open it in its tab.</div>';
+    + '<div class="muted" style="font-size:11px;margin-top:6px">The main session (left) and everything it launched. Click a node to open it in its tab.</div>';
+}
+
+let sessionNodeZoom = 'fit'; // 'fit' | number
+function applySessionNodeZoom() {
+  const canvas = document.querySelector('#session-waterfall-wrap .node-canvas');
+  const svg = canvas && canvas.querySelector('svg'); if (!svg) return;
+  const W = Number(svg.getAttribute('data-w')) || 900, H = Number(svg.getAttribute('data-h')) || 600;
+  let z = sessionNodeZoom;
+  if (z === 'fit') {
+    const availW = Math.max(140, canvas.clientWidth - 20);
+    const availH = Math.max(140, canvas.clientHeight - 20);
+    z = Math.min(1, availW / W, availH / H);
+  }
+  z = Math.max(0.2, Math.min(2.5, z));
+  svg.style.width = (W * z).toFixed(0) + 'px';
+  const lbl = document.getElementById('node-zoom-label'); if (lbl) lbl.textContent = Math.round(z * 100) + '%';
+}
+function currentNodeZoom() {
+  const svg = document.querySelector('#session-waterfall-wrap .node-canvas svg');
+  const W = Number(svg && svg.getAttribute('data-w')) || 900;
+  return svg ? (parseFloat(svg.style.width) || W) / W : 1;
 }
 
 function renderSessionHeader(workflows, sub) {
@@ -2392,6 +2421,21 @@ document.querySelectorAll('[data-sessionview]').forEach((b) => b.addEventListene
   b.classList.toggle('active', true);
   renderSessionView();
 }));
+// Node-view zoom: −/+/Fit buttons and ⌘/Ctrl+scroll.
+document.getElementById('session-waterfall-wrap')?.addEventListener('click', (e) => {
+  const zb = e.target.closest('[data-nodezoom]'); if (!zb) return;
+  const act = zb.getAttribute('data-nodezoom'); const cur = currentNodeZoom();
+  sessionNodeZoom = act === 'fit' ? 'fit' : act === 'in' ? cur * 1.25 : cur * 0.8;
+  applySessionNodeZoom();
+});
+document.getElementById('session-waterfall-wrap')?.addEventListener('wheel', (e) => {
+  const canvas = e.target.closest('.node-canvas'); if (!canvas || !(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  const cur = currentNodeZoom();
+  sessionNodeZoom = e.deltaY < 0 ? cur * 1.12 : cur * 0.9;
+  applySessionNodeZoom();
+}, { passive: false });
+window.addEventListener('resize', () => { if (sessionView === 'nodes' && sessionNodeZoom === 'fit') applySessionNodeZoom(); });
 
 function setTab(tab) {
   const panels = { control: 'tab-control', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
