@@ -1617,7 +1617,7 @@ function buildCallsTable(calls) {
       <tr data-call-idx="${i}" style="cursor:pointer">
         <td class="mono">${esc(String(c.id || ''))}</td>
         <td class="mono" title="${esc(c.agentId || '')}">${esc(c.label || '')}</td>
-        <td><span class="tier-dot" style="background:${esc(tierColor(c.tier))}"></span> <span class="mono">${esc(c.tier || '')}</span><br><span class="label-11 muted">${esc((c.model || '').replace('claude-', ''))}</span></td>
+        <td title="${esc(c.tier || '')}"><span class="tier-dot" style="background:${esc(tierColor(c.tier))}"></span> <span class="mono">${esc((c.model || '').replace('claude-', '') || c.tier || '—')}</span></td>
         <td class="mono">${esc(c.phase || '—')}</td>
         <td class="num mono">${fmtMs(c.ms)}</td>
         <td class="num mono" title="${fmtN(c.inTok)}">${fmtNshort(c.inTok)}</td>
