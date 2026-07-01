@@ -1184,6 +1184,54 @@ select.input {
 }
 .obs-sub-sep { color: var(--gray-500); }
 
+/* ── Workflow runs as a tight, headed table (Geist/Vercel-ish) ───────────────── */
+.wf-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12.5px;
+}
+.wf-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-900);
+  background: var(--bg-200);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.wf-table th.num, .wf-table td.num {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+.wf-table td {
+  padding: 5px 10px;              /* ~30px rows — tight */
+  border-bottom: 1px solid var(--border);
+  color: var(--gray-1000);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+/* Neutralize the old card display rules so these behave as real table elements. */
+.wf-table .obs-run-item { display: table-row-group; margin: 0; border: 0; background: none; border-radius: 0; }
+.wf-table .obs-run-row { display: table-row; cursor: pointer; padding: 0; gap: 0; width: auto; }
+.wf-table .obs-run-row:hover td,
+.wf-table .obs-run-row[aria-expanded="true"] td { background: var(--bg-200); }
+.wf-table .obs-run-row:focus-visible { outline: none; }
+.wf-table .obs-run-row:focus-visible td { box-shadow: inset 0 0 0 1px var(--blue); }
+.wf-table .wf-chev { text-align: center; color: var(--gray-700); padding-left: 6px; padding-right: 0; }
+.wf-table .obs-run-chevron { font-size: 9px; display: inline-block; }
+.wf-table .wf-name .obs-run-name { font-weight: 600; }
+.wf-table .wf-when { color: var(--gray-700); font-family: var(--font-mono); font-size: 11.5px; }
+/* the unfurled detail spans the full width, no cell padding of its own */
+.wf-table .obs-run-detail-row > td { padding: 0; background: var(--bg-100); border-bottom: 1px solid var(--border); }
+.wf-table .obs-run-detail-row .obs-run-detail { padding: 6px 12px 14px; }
+
 .obs-run-status {
   font-size: 11px;
   font-family: var(--font-mono);

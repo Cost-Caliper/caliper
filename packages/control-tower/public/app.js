@@ -1134,6 +1134,12 @@ observedEls.list?.addEventListener('click', (e) => {
   const row = e.target.closest('.obs-run-row');
   if (row) toggleItem(row.closest('.obs-run-item'));
 });
+// Keyboard: the run row is a <tr role=button tabindex=0>, so Enter/Space toggle it.
+observedEls.list?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('.obs-run-row');
+  if (row) { e.preventDefault(); toggleItem(row.closest('.obs-run-item')); }
+});
 
 // ── Timeline hover tooltip ─────────────────────────────────────────────────────
 // A floating tooltip that follows the cursor over the timeline and summarizes the
@@ -1460,29 +1466,33 @@ function renderObservedList(runs) {
     return;
   }
   observedEls.empty.style.display = 'none';
-  observedEls.list.innerHTML = runs.map((r) => {
-    // Name + date/time stay on one line; branch + (full) dir reveal on row hover.
-    const sep = '<span class="obs-sub-sep"> · </span>';
-    const branchDir = [
-      r.gitBranch ? esc(r.gitBranch) : '',
-      r.cwd ? `<span title="${esc(r.cwd)}">${esc(homeAbbrev(r.cwd))}</span>` : '',
-    ].filter(Boolean).join(sep);
-    const sub = esc(fmtWhen(r)) + (branchDir ? `<span class="ctx-more">${sep}${branchDir}</span>` : '');
+  // A tight, headed table (Geist/Vercel-ish): sticky subtle header, hairline row
+  // dividers, right-aligned mono numbers. Each run is a <tbody> holding a summary row
+  // + a hidden detail row that unfurls in place. (Purely presentational — revertible.)
+  const colgroup = '<colgroup>'
+    + '<col style="width:26px"><col style="width:32%"><col style="width:17%"><col style="width:11%">'
+    + '<col style="width:10%"><col style="width:12%"><col style="width:11%"></colgroup>';
+  const head = '<thead><tr>'
+    + '<th aria-hidden="true"></th><th>Workflow</th><th>When</th><th>Status</th>'
+    + '<th class="num">Agents</th><th class="num">Cost</th><th class="num">Wall</th>'
+    + '</tr></thead>';
+  const bodies = runs.map((r) => {
+    const branchDir = [r.gitBranch ? esc(r.gitBranch) : '', r.cwd ? esc(homeAbbrev(r.cwd)) : ''].filter(Boolean).join(' · ');
     const nameTitle = r.scriptPath ? `Workflow file: ${r.scriptPath}` : (r.name || r.runId);
-    return `
-    <div class="obs-run-item" data-run-id="${esc(r.runId)}">
-      <button class="obs-run-row" type="button" aria-expanded="false" aria-label="Toggle detail for ${esc(r.name || r.runId)}">
-        <span class="obs-run-chevron" aria-hidden="true">▶</span>
-        <span class="obs-run-main">
-          <span class="obs-run-name" title="${esc(nameTitle)}">${esc(r.name || r.runId)}</span>
-          ${sub ? `<span class="obs-run-sub">${sub}</span>` : ''}
-        </span>
-        <span class="obs-run-status ${esc(statusClass(r.status))}">${esc(r.status || 'unknown')}</span>
-        <span class="obs-run-meta">${r.agentCount || 0} agents &middot; $${Number(r.costUsd || 0).toFixed(5)} &middot; ${fmtMs(r.durationMs || 0)}</span>
-      </button>
-      <div class="obs-run-detail" hidden></div>
-    </div>`;
+    return `<tbody class="obs-run-item" data-run-id="${esc(r.runId)}">`
+      + `<tr class="obs-run-row" tabindex="0" role="button" aria-expanded="false" aria-label="Toggle detail for ${esc(r.name || r.runId)}">`
+      + `<td class="wf-chev"><span class="obs-run-chevron" aria-hidden="true">▶</span></td>`
+      + `<td class="wf-name"><span class="obs-run-name" title="${esc(nameTitle)}">${esc(r.name || r.runId)}</span></td>`
+      + `<td class="wf-when" title="${esc(branchDir)}">${esc(fmtWhen(r))}</td>`
+      + `<td><span class="obs-run-status ${esc(statusClass(r.status))}">${esc(r.status || 'unknown')}</span></td>`
+      + `<td class="num">${r.agentCount || 0}</td>`
+      + `<td class="num" title="$${Number(r.costUsd || 0).toFixed(6)}">${fmtUsdShort(r.costUsd || 0)}</td>`
+      + `<td class="num">${fmtMs(r.durationMs || 0)}</td>`
+      + `</tr>`
+      + `<tr class="obs-run-detail-row" hidden><td colspan="7"><div class="obs-run-detail"></div></td></tr>`
+      + `</tbody>`;
   }).join('');
+  observedEls.list.innerHTML = `<table class="wf-table">${colgroup}${head}${bodies}</table>`;
 }
 
 async function loadObservedList() {
@@ -1742,31 +1752,32 @@ function renderCallDetailInto(slot, c) {
 async function toggleItem(item) {
   if (!item) return;
   const row = item.querySelector('.obs-run-row');
-  const detail = item.querySelector('.obs-run-detail');
+  const detailRow = item.querySelector('.obs-run-detail-row'); // the <tr> that unfurls
+  const detail = item.querySelector('.obs-run-detail');        // the div we fill
   const chev = item.querySelector('.obs-run-chevron');
-  if (!row || !detail) return;
+  if (!row || !detail || !detailRow) return;
 
-  const setOpen = (rw, dt, cv, open) => {
-    dt.hidden = !open;
+  const setOpen = (rw, dr, cv, open) => {
+    dr.hidden = !open;
     rw.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (cv) cv.textContent = open ? '▼' : '▶';
   };
 
-  if (row.getAttribute('aria-expanded') === 'true') { setOpen(row, detail, chev, false); return; }
+  if (row.getAttribute('aria-expanded') === 'true') { setOpen(row, detailRow, chev, false); return; }
 
   // accordion: collapse any other open item so the page stays tidy
   observedEls.list.querySelectorAll('.obs-run-item').forEach((other) => {
     if (other === item) return;
     const orow = other.querySelector('.obs-run-row');
     if (orow && orow.getAttribute('aria-expanded') === 'true') {
-      setOpen(orow, other.querySelector('.obs-run-detail'), other.querySelector('.obs-run-chevron'), false);
+      setOpen(orow, other.querySelector('.obs-run-detail-row'), other.querySelector('.obs-run-chevron'), false);
     }
   });
 
   let run = runCache.get(item.dataset.runId);
   if (!run) {
     detail.innerHTML = '<div class="muted" style="padding:12px;font-size:12px">Loading…</div>';
-    setOpen(row, detail, chev, true);
+    setOpen(row, detailRow, chev, true);
     try {
       run = await apiFetch(`/v1/observed/${encodeURIComponent(item.dataset.runId)}`);
       runCache.set(item.dataset.runId, run);
@@ -1776,7 +1787,7 @@ async function toggleItem(item) {
     }
   }
   detail.innerHTML = buildDetailHtml(run);
-  setOpen(row, detail, chev, true);
+  setOpen(row, detailRow, chev, true);
 }
 
 // Refresh button — clear the cache so re-expanding re-fetches fresh data
