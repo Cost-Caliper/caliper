@@ -1470,3 +1470,6 @@ select.input {
 .si-speed .si-lg { gap: 5px; }
 .si-speed strong { color: var(--gray-1000); font-family: var(--font-mono); }
 .si-speed-note { color: var(--gray-500); }
+
+.si-method-formula { margin: 0 0 8px; }
+.si-method-formula code { font-family: var(--font-mono); font-size: 11px; color: var(--gray-1000); background: var(--gray-100); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; display: inline-block; }

@@ -2507,6 +2507,11 @@ const SUBSTITUTE = {
   haiku: { name: 'GLM-4.7 Flash', or: 'z-ai/glm-4.7-flash', prompt: 0.06, completion: 0.40, cacheRd: 0.01 },
 };
 const SUBSTITUTE_ASOF = '2026-07-01';
+// Anthropic list prices ($ per MILLION tokens) used for the current-cost estimate.
+// Mirrors workflow-lens/src/shim.mjs PRICE; verified 2026-07-01 against OpenRouter's
+// Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5 (in/out and cache read/write all match).
+// cache-write = in × 1.25, cache-read = in × 0.10 (matches real Anthropic cache pricing).
+const ANTHROPIC_PRICE = { opus: { in: 5, out: 25 }, sonnet: { in: 3, out: 15 }, haiku: { in: 1, out: 5 } };
 // Aggregate real token usage per tier (input/output/cache) across workflow calls + direct
 // subagents — needed to re-price under a substitute model. Skips workflows without loaded detail.
 function sessionTierUsage(workflows, sub, wfDetails) {
@@ -2654,13 +2659,17 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   // "*" methodology section — where every number comes from, and the idea behind it.
   let method = '';
   if (savings) {
-    const subList = ['opus', 'sonnet', 'haiku'].map((t) => { const s = SUBSTITUTE[t]; return `<li><strong>${t}</strong> → ${esc(s.name)} (<code>${esc(s.or)}</code>): $${s.prompt}/M in · $${s.completion}/M out · $${s.cacheRd}/M cache-read</li>`; }).join('');
+    const curList = savings.lines.map((l) => { const p = ANTHROPIC_PRICE[l.tier]; return `<li><strong>${l.tier}</strong>: $${p.in}/M in · $${p.out}/M out · $${(p.in * 1.25).toFixed(2)}/M cache-write (in×1.25) · $${(p.in * 0.10).toFixed(2)}/M cache-read (in×0.10)</li>`; }).join('');
+    const subList = savings.lines.map((l) => { const s = l.sub; return `<li><strong>${l.tier}</strong> → ${esc(s.name)} (<code>${esc(s.or)}</code>): $${s.prompt}/M in · $${s.completion}/M out · $${s.cacheRd}/M cache-read · cache-write at in rate</li>`; }).join('');
     method = `<details class="si-method" id="si-method">`
       + `<summary>* How “potential savings” is calculated &amp; where the prices come from</summary>`
       + `<div class="si-method-body">`
-      + `<p><strong>Your current cost</strong> is reconstructed from the real token counts in each run's transcript (input, output, cache-write, cache-read), priced at Anthropic's published rates and cache-aware — cache-write ×1.25, cache-read ×0.10. For this session's Opus that is $5/M in · $25/M out · $0.50/M cache-read, which matches Anthropic <strong>Claude Opus 4.8</strong>'s public pricing. It is an estimate from token counts, not a billed invoice.</p>`
-      + `<p><strong>The substitute cost</strong> re-prices those <em>same</em> token counts at an open model's <strong>OpenRouter list price</strong> (captured ${SUBSTITUTE_ASOF}), the identical cache-aware way: (input + cache-write) at the prompt rate, cache-read at the model's cached-input rate, output at the completion rate. Because most agent tokens are cache reads (re-sent context), a model's <em>cached-input</em> price — not its headline price — usually decides the comparison.</p>`
-      + `<p><strong>Substitutes &amp; prices used:</strong></p><ul class="si-method-list">${subList}</ul>`
+      + `<p><strong>Your current cost</strong> is reconstructed from the real token counts in each run's transcript (input, output, cache-write, cache-read), priced <em>per token</em> at Anthropic's published rates, cache-aware:</p>`
+      + `<p class="si-method-formula"><code>cost = input×in + cache_write×in×1.25 + cache_read×in×0.10 + output×out</code></p>`
+      + `<p><strong>Current model prices</strong> (Anthropic list, $ per million tokens — verified against OpenRouter ${SUBSTITUTE_ASOF}, matching Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5):</p><ul class="si-method-list">${curList}</ul>`
+      + `<p>It's an estimate reconstructed from token counts, not a billed invoice.</p>`
+      + `<p><strong>The substitute cost</strong> re-prices those <em>same</em> token counts at an open model's <strong>OpenRouter list price</strong> (captured ${SUBSTITUTE_ASOF}), the identical cache-aware way — (input + cache-write) at the prompt rate, cache-read at the model's cached-input rate, output at the completion rate. Because most agent tokens are cache reads (re-sent context), a model's <em>cached-input</em> price — not its headline price — usually decides the comparison.</p>`
+      + `<p><strong>Substitute prices used</strong> ($ per million tokens):</p><ul class="si-method-list">${subList}</ul>`
       + `<p class="si-method-warn"><strong>What this does NOT capture:</strong> whether an open model would do the work as well. It assumes identical token usage; a cheaper model may need more attempts or produce worse results, which erodes the saving. Treat it as a ceiling on token economics, not a promise — and prices change, so re-check OpenRouter.</p>`
       + `</div></details>`;
   }
