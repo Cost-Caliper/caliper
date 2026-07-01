@@ -1355,6 +1355,13 @@ select.input {
 }
 
 /* Nested session graph — everything faint by default; hovering a node lights up its branch. */
+.node-canvas.nested {
+  overscroll-behavior: contain;   /* two-finger / drag pan stays in the graph, never scrolls the page */
+  touch-action: pan-x pan-y;
+  cursor: grab;
+}
+.node-canvas.nested:active { cursor: grabbing; }
+.node-canvas.nested .sfold { cursor: pointer; }
 .node-canvas.nested .snode,
 .node-canvas.nested .sedge {
   opacity: .42;

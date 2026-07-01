@@ -2288,13 +2288,15 @@ function buildSessionTree(workflows, sub, wfDetails) {
   return { root, index };
 }
 // Left-rooted layout: x = depth, y = post-order leaf row (parents centered on children).
-function layoutSessionTree(root) {
+// A node in `collapsed` is treated as a leaf — its descendants get no rows (reclaims height).
+function layoutSessionTree(root, collapsed) {
   const positions = new Map();
   let rowCounter = 0, maxDepth = 0;
   const assign = (node, depth) => {
     maxDepth = Math.max(maxDepth, depth);
-    if (!node.children.length) { const r = rowCounter++; positions.set(node.id, { depth, row: r }); return r; }
-    const rs = node.children.map((c) => assign(c, depth + 1));
+    const kids = collapsed && collapsed.has(node.id) ? [] : node.children;
+    if (!kids.length) { const r = rowCounter++; positions.set(node.id, { depth, row: r }); return r; }
+    const rs = kids.map((c) => assign(c, depth + 1));
     const r = (rs[0] + rs[rs.length - 1]) / 2;
     positions.set(node.id, { depth, row: r });
     return r;
@@ -2303,49 +2305,112 @@ function layoutSessionTree(root) {
   return { positions, rows: rowCounter, maxDepth };
 }
 
-let sessionNestedIndex = null; // id → node, for hover branch-highlight
+const SNODE_KC = { session: '#8a8f98', workflow: '#6366f1', wagent: '#818cf8', subagent: '#14b8a6' };
+const SNODE_LEVEL_W = 200, SNODE_ROW_H = 22, SNODE_PAD_X = 12, SNODE_PAD_TOP = 12, SNODE_BOX_W = 178, SNODE_BOX_H = 17;
+let sessionNestedIndex = null;    // id → node, for hover branch-highlight
+let sessionTree = null;           // {root, index} for the currently-loaded data
+let sessionCollapsed = new Set();  // ids of folded nodes (their children are hidden)
+let sessionNodePos = null;        // VISIBLE id → {depth, row}, used for auto-scroll-into-view
+
+// Entry point: (re)build the tree from data and collapse every node-with-children by default,
+// so a huge session opens as a glanceable overview instead of a 200-row wall.
 function buildSessionNodesSvg(workflows, sub, wfDetails) {
   const tree = buildSessionTree(workflows, sub, wfDetails);
   if (!tree.root.children.length) return ctEmptyHtml('Nothing launched in this session yet', 'When the session runs a Workflow or spawns a subagent, it appears here.', '');
+  sessionTree = tree;
   sessionNestedIndex = tree.index;
-  const { positions, rows, maxDepth } = layoutSessionTree(tree.root);
-  const LEVEL_W = 200, ROW_H = 22, padX = 12, padTop = 12, BOX_W = 178, BOX_H = 17;
+  sessionCollapsed = new Set();
+  for (const node of tree.index.values()) { if (node.id !== 'session' && node.children.length) sessionCollapsed.add(node.id); }
+  return renderSessionNodes();
+}
+
+// Pure render from sessionTree + sessionCollapsed → zoombar + faint nested SVG + legend.
+// Called both on first build and on every fold/expand toggle (no refetch).
+function renderSessionNodes() {
+  const tree = sessionTree; if (!tree) return '';
+  const { positions, rows, maxDepth } = layoutSessionTree(tree.root, sessionCollapsed);
+  sessionNodePos = positions;
+  const LEVEL_W = SNODE_LEVEL_W, ROW_H = SNODE_ROW_H, padX = SNODE_PAD_X, padTop = SNODE_PAD_TOP, BOX_W = SNODE_BOX_W, BOX_H = SNODE_BOX_H, KC = SNODE_KC;
   const W = padX * 2 + (maxDepth + 1) * LEVEL_W;
   const H = padTop * 2 + Math.max(1, rows) * ROW_H;
-  const KC = { session: '#8a8f98', workflow: '#6366f1', wagent: '#818cf8', subagent: '#14b8a6' };
   const edges = [], nodes = [];
   const emit = (node) => {
-    const p = positions.get(node.id); const px = padX + p.depth * LEVEL_W, py = padTop + p.row * ROW_H;
-    for (const c of node.children) {
-      const cp = positions.get(c.id); const cx = padX + cp.depth * LEVEL_W, cy = padTop + cp.row * ROW_H;
+    const p = positions.get(node.id); if (!p) return; // hidden (ancestor collapsed)
+    const px = padX + p.depth * LEVEL_W, py = padTop + p.row * ROW_H;
+    const folded = sessionCollapsed.has(node.id);
+    const kids = folded ? [] : node.children;
+    for (const c of kids) {
+      const cp = positions.get(c.id); if (!cp) continue;
+      const cx = padX + cp.depth * LEVEL_W, cy = padTop + cp.row * ROW_H;
       const x1 = px + BOX_W, y1 = py + BOX_H / 2, x2 = cx, y2 = cy + BOX_H / 2, mx = (x1 + x2) / 2;
       edges.push(`<path class="sedge" data-echild="${esc(c.id)}" d="M ${x1} ${y1.toFixed(1)} H ${mx.toFixed(1)} V ${y2.toFixed(1)} H ${x2}" stroke="${KC[c.kind] || '#888'}" stroke-width="1" fill="none"/>`);
       emit(c);
     }
     const color = KC[node.kind] || '#888';
     const nav = (node.navKind && node.navId) ? ` data-nav-kind="${node.navKind}" data-nav-id="${esc(node.navId)}"` : '';
+    const hasKids = node.children.length > 0 && node.id !== 'session'; // root isn't foldable
+    const labelMax = hasKids ? 22 : 27;
+    let fold = '';
+    if (hasKids) {
+      const glyph = folded ? '▸' : '▾';
+      const badge = folded ? ' ' + node.children.length : '';
+      fold = `<g class="sfold" data-fold="${esc(node.id)}">`
+        + `<rect x="${px + BOX_W - 30}" y="${py}" width="30" height="${BOX_H}" fill="transparent"/>`
+        + `<text x="${px + BOX_W - 26}" y="${py + 12}" style="font-size:9px;fill:var(--gray-700)">${glyph}${esc(badge)}</text></g>`;
+    }
     nodes.push(
       `<g class="snode" data-node-id="${esc(node.id)}"${nav} style="cursor:${nav ? 'pointer' : 'default'}">`
       + `<rect x="${px}" y="${py}" width="${BOX_W}" height="${BOX_H}" rx="3" fill="${color}" fill-opacity="0.16" stroke="${color}" stroke-width="0.9"/>`
       + `<circle cx="${px + 7}" cy="${py + BOX_H / 2}" r="2.4" fill="${color}"/>`
-      + `<text x="${px + 14}" y="${py + 12}" style="font-size:9px;fill:var(--gray-1000)">${esc(truncTxt(node.label, 28))}</text>`
-      + `<title>${esc(node.label)}${node.kind !== 'session' ? ' · ' + node.kind : ''}${node.ms != null ? ' · ' + fmtMs(node.ms) : ''}${node.cost != null ? ' · ' + fmtUsdShort(node.cost) : ''}</title></g>`,
+      + `<text x="${px + 14}" y="${py + 12}" style="font-size:9px;fill:var(--gray-1000)">${esc(truncTxt(node.label, labelMax))}</text>`
+      + fold
+      + `<title>${esc(node.label)}${node.kind !== 'session' ? ' · ' + node.kind : ''}${hasKids ? ' · ' + node.children.length + ' inside' : ''}${node.ms != null ? ' · ' + fmtMs(node.ms) : ''}${node.cost != null ? ' · ' + fmtUsdShort(node.cost) : ''}</title></g>`,
     );
   };
   emit(tree.root);
   const svg = `<svg viewBox="0 0 ${W} ${H}" data-w="${W}" data-h="${H}" width="${W}" style="height:auto;font-family:ui-monospace,monospace">${edges.join('')}${nodes.join('')}</svg>`;
-  const zoombar = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">`
+  const total = tree.index.size - 1, shown = positions.size - 1;
+  const allFolded = shown < total; // at least one node still collapsed
+  const zoombar = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">`
     + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="out" aria-label="Zoom out">−</button>`
     + `<span id="node-zoom-label" class="mono" style="font-size:11px;color:var(--gray-700);min-width:42px;text-align:center"></span>`
     + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="in" aria-label="Zoom in">+</button>`
     + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="fit">Fit</button>`
-    + `<span class="muted" style="font-size:11px;margin-left:6px">${tree.index.size - 1} nodes · scroll to pan, ⌘/Ctrl+scroll to zoom · hover a node to trace its branch</span></div>`;
+    + `<span style="width:1px;height:16px;background:var(--border);margin:0 2px"></span>`
+    + `<button class="btn btn-tertiary btn-sm" type="button" data-foldall="${allFolded ? 'expand' : 'collapse'}">${allFolded ? 'Expand all' : 'Collapse all'}</button>`
+    + `<span class="muted" style="font-size:11px;margin-left:6px">${shown} of ${total} nodes shown · click ▸ to expand · drag/two-finger to pan · ⌘/Ctrl+scroll to zoom · hover to trace a branch</span></div>`;
   const sw = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:2px;background:${c};display:inline-block"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
   const legend = `<div style="margin-top:6px">${sw(KC.workflow, 'Workflow')}${sw(KC.wagent, 'Workflow agent')}${sw(KC.subagent, 'Subagent (& nested)')}</div>`;
   return zoombar
     + `<div class="node-canvas nested" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:10px">${svg}</div>`
     + legend
-    + '<div class="muted" style="font-size:11px;margin-top:6px">Everything the session ran, nested (workflow → its agents; subagent → nested). All faint — hover a node to light up its branch. Click a workflow/subagent to open it.</div>';
+    + '<div class="muted" style="font-size:11px;margin-top:6px">Everything the session ran, nested (workflow → its agents; subagent → nested). Workflows start folded — click ▸ to open one, or Expand all to see every node faintly and hover to trace a branch. Click a workflow/subagent to open it.</div>';
+}
+
+// Re-render the nested view in place after a fold/expand change, keeping the current zoom.
+function rerenderSessionNodes() {
+  const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap || !sessionTree) return;
+  wrap.innerHTML = renderSessionNodes();
+  requestAnimationFrame(applySessionNodeZoom);
+}
+function toggleNodeCollapse(id) {
+  if (sessionCollapsed.has(id)) sessionCollapsed.delete(id); else sessionCollapsed.add(id);
+  rerenderSessionNodes();
+}
+function setAllCollapsed(collapse) {
+  sessionCollapsed = new Set();
+  if (collapse) for (const node of sessionTree.index.values()) { if (node.id !== 'session' && node.children.length) sessionCollapsed.add(node.id); }
+  rerenderSessionNodes();
+}
+// Ease the hovered node's branch into view when its highlighted ancestors/leaves are off-screen.
+function scrollHoveredIntoView(canvas, id) {
+  const pos = sessionNodePos && sessionNodePos.get(id); if (!pos) return;
+  const z = currentNodeZoom();
+  const nodeY = (SNODE_PAD_TOP + pos.row * SNODE_ROW_H) * z;
+  const top = canvas.scrollTop, bottom = top + canvas.clientHeight;
+  if (nodeY < top + 40 || nodeY > bottom - 40) {
+    canvas.scrollTo({ top: Math.max(0, nodeY - canvas.clientHeight / 2), behavior: 'smooth' });
+  }
 }
 
 let sessionNodeZoom = 'fit'; // 'fit' | number
@@ -2467,6 +2532,10 @@ async function navigateToSubagent(agentId) {
   selectSubagent(agentId);
 }
 document.getElementById('session-waterfall-wrap')?.addEventListener('click', (e) => {
+  const fold = e.target.closest('[data-fold]');       // ▸/▾ glyph: fold/expand this subtree
+  if (fold) { e.stopPropagation(); toggleNodeCollapse(fold.getAttribute('data-fold')); return; }
+  const all = e.target.closest('[data-foldall]');      // Expand all / Collapse all
+  if (all) { setAllCollapsed(all.getAttribute('data-foldall') === 'collapse'); return; }
   const el = e.target.closest('[data-nav-kind]'); if (!el) return;
   const kind = el.getAttribute('data-nav-kind'); const id = el.getAttribute('data-nav-id');
   if (kind === 'wf') navigateToRun(id); else navigateToSubagent(id);
@@ -2486,20 +2555,56 @@ document.getElementById('session-waterfall-wrap')?.addEventListener('click', (e)
   applySessionNodeZoom();
 });
 document.getElementById('session-waterfall-wrap')?.addEventListener('wheel', (e) => {
-  const canvas = e.target.closest('.node-canvas'); if (!canvas || !(e.ctrlKey || e.metaKey)) return;
+  const canvas = e.target.closest('.node-canvas');
+  if (!canvas) return;
+  // No modifier → let native overflow:auto do the two-finger / wheel pan (real momentum).
+  if (!(e.ctrlKey || e.metaKey)) return;
+  // ⌘/Ctrl+scroll (and trackpad pinch) → zoom anchored under the cursor, not the corner.
   e.preventDefault();
+  const svg = canvas.querySelector('svg'); if (!svg) return;
+  const W = Number(svg.getAttribute('data-w')) || 900;
   const cur = currentNodeZoom();
-  sessionNodeZoom = e.deltaY < 0 ? cur * 1.12 : cur * 0.9;
-  applySessionNodeZoom();
+  const next = Math.max(0.2, Math.min(2.5, cur * (e.deltaY < 0 ? 1.12 : 0.9)));
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left, cy = e.clientY - rect.top;      // cursor within canvas
+  const bx = canvas.scrollLeft + cx, by = canvas.scrollTop + cy;    // content point under cursor
+  sessionNodeZoom = next;
+  svg.style.width = (W * next).toFixed(0) + 'px';                   // synchronous layout
+  const ratio = next / cur;
+  canvas.scrollLeft = bx * ratio - cx;
+  canvas.scrollTop = by * ratio - cy;
+  const lbl = document.getElementById('node-zoom-label'); if (lbl) lbl.textContent = Math.round(next * 100) + '%';
 }, { passive: false });
+// Drag-to-pan the canvas background (grab cursor). Never starts on a node/edge/fold, so
+// branch-hover and click-to-open stay intact; a <4px move stays a click.
+let panState = null;
+document.getElementById('session-waterfall-wrap')?.addEventListener('pointerdown', (e) => {
+  const canvas = e.target.closest('.node-canvas.nested'); if (!canvas) return;
+  if (e.button !== 0 || e.target.closest('.snode, .sedge')) return;
+  panState = { canvas, x: e.clientX, y: e.clientY, sl: canvas.scrollLeft, st: canvas.scrollTop, moved: false, pid: e.pointerId };
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* no-op */ }
+  e.preventDefault();
+});
+document.getElementById('session-waterfall-wrap')?.addEventListener('pointermove', (e) => {
+  if (!panState) return;
+  const dx = e.clientX - panState.x, dy = e.clientY - panState.y;
+  if (!panState.moved && Math.hypot(dx, dy) > 4) panState.moved = true;
+  if (panState.moved) { panState.canvas.scrollLeft = panState.sl - dx; panState.canvas.scrollTop = panState.st - dy; }
+});
+function endPan() { panState = null; }
+document.getElementById('session-waterfall-wrap')?.addEventListener('pointerup', endPan);
+document.getElementById('session-waterfall-wrap')?.addEventListener('pointercancel', endPan);
 // Hover a node in the nested graph → light up its whole branch (self + ancestors + descendants).
 function clearNodeHover(canvas) {
   if (!canvas) return;
   canvas.classList.remove('hovering');
   canvas.querySelectorAll('.hl').forEach((x) => x.classList.remove('hl'));
 }
+let hoverScrollT = null;
 document.getElementById('session-waterfall-wrap')?.addEventListener('mouseover', (e) => {
   const canvas = e.target.closest('.node-canvas.nested'); if (!canvas || !sessionNestedIndex) return;
+  if (panState && panState.moved) return; // don't fight an active drag-pan
+  clearTimeout(hoverScrollT);
   const g = e.target.closest('.snode');
   if (!g) { clearNodeHover(canvas); return; }
   const id = g.getAttribute('data-node-id');
@@ -2511,6 +2616,7 @@ document.getElementById('session-waterfall-wrap')?.addEventListener('mouseover',
   canvas.classList.add('hovering');
   canvas.querySelectorAll('.snode').forEach((n) => n.classList.toggle('hl', set.has(n.getAttribute('data-node-id'))));
   canvas.querySelectorAll('.sedge').forEach((ed) => ed.classList.toggle('hl', set.has(ed.getAttribute('data-echild'))));
+  hoverScrollT = setTimeout(() => scrollHoveredIntoView(canvas, id), 90); // ease branch into view when settled
 });
 document.getElementById('session-waterfall-wrap')?.addEventListener('mouseleave', () => {
   clearNodeHover(document.querySelector('#session-waterfall-wrap .node-canvas.nested'));
