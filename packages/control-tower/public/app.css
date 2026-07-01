@@ -1353,3 +1353,18 @@ select.input {
 .stat-cards-sm .stat-n {
   font-size: 18px;
 }
+
+/* Nested session graph — everything faint by default; hovering a node lights up its branch. */
+.node-canvas.nested .snode,
+.node-canvas.nested .sedge {
+  opacity: .42;
+  transition: opacity .1s ease;
+}
+.node-canvas.nested.hovering .snode,
+.node-canvas.nested.hovering .sedge {
+  opacity: .1;
+}
+.node-canvas.nested.hovering .snode.hl,
+.node-canvas.nested.hovering .sedge.hl {
+  opacity: 1;
+}

@@ -2221,11 +2221,23 @@ async function loadSessionWaterfall() {
   renderSessionHeader(workflows, sub);
   renderSessionView();
 }
-function renderSessionView() {
+async function renderSessionView() {
   const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap || !lastSession) return;
   const { workflows, sub } = lastSession;
-  wrap.innerHTML = sessionView === 'nodes' ? buildSessionNodesSvg(workflows, sub) : buildSessionWaterfallSvg(workflows, sub);
-  if (sessionView === 'nodes') requestAnimationFrame(applySessionNodeZoom); // fit + center to start
+  const caveat = document.getElementById('session-waterfall-caveat'); // "Bars on a time axis" — waterfall only
+  if (caveat) caveat.style.display = sessionView === 'nodes' ? 'none' : '';
+  if (sessionView !== 'nodes') { wrap.innerHTML = buildSessionWaterfallSvg(workflows, sub); return; }
+  // Nested node view needs each workflow's agent calls — fetch detail once, cache on lastSession.
+  if (!lastSession.wfDetails) {
+    wrap.innerHTML = '<p class="muted" style="padding:12px;font-size:12px">Loading nested graph…</p>';
+    const token = lastSession;
+    const entries = await Promise.all((workflows || []).map((w) =>
+      apiFetch(`/v1/observed/${encodeURIComponent(w.runId)}`).then((d) => [w.runId, d]).catch(() => [w.runId, null])));
+    if (lastSession !== token || sessionView !== 'nodes') return; // session reloaded / view switched while awaiting
+    lastSession.wfDetails = new Map(entries);
+  }
+  wrap.innerHTML = buildSessionNodesSvg(workflows, sub, lastSession.wfDetails);
+  requestAnimationFrame(applySessionNodeZoom); // fit to start
 }
 // Build the merged item list once (used by both the waterfall and the node view).
 function sessionItems(workflows, sub) {
@@ -2251,48 +2263,89 @@ function sessionLegend() {
 // Node/call-graph view: the main session pinned LEFT, fanning out to a vertical list of
 // everything it launched on the right. Left-rooted so the root is always visible and there's
 // no horizontal scroll even with a large fan-out (it scrolls vertically instead).
-function buildSessionNodesSvg(workflows, sub) {
-  const items = sessionItems(workflows, sub);
-  if (!items.length) return ctEmptyHtml('Nothing launched in this session yet', 'When the session runs a Workflow or spawns a subagent, it appears here.', '');
-  const ROOT_W = 150, CHILD_W = 190, BOX_H = 38, ROW_H = 46, padX = 16, padTop = 12, GAP = 80;
-  const n = items.length;
-  const childX = padX + ROOT_W + GAP;
-  const H = padTop * 2 + n * ROW_H;
-  const W = childX + CHILD_W + 16;
-  const rootRight = padX + ROOT_W;
-  const rootY = Math.max(padTop, padTop + (n * ROW_H) / 2 - BOX_H / 2);
-  const rootMidY = rootY + BOX_H / 2;
-  const midX = rootRight + GAP / 2;
-  const edges = [], boxes = [];
-  items.forEach((it, i) => {
-    const by = padTop + i * ROW_H, midY = by + BOX_H / 2;
-    const color = SESSION_KIND_COLOR[it.kind];
-    edges.push(`<path d="M ${rootRight} ${rootMidY.toFixed(1)} H ${midX.toFixed(1)} V ${midY.toFixed(1)} H ${childX}" stroke="${color}" stroke-opacity="0.4" stroke-width="1.5" fill="none"/>`);
-    const navKind = it.kind === 'workflow' ? 'wf' : 'sub';
-    boxes.push(
-      `<g data-nav-kind="${navKind}" data-nav-id="${esc(it.navId)}" style="cursor:pointer">`
-      + `<rect x="${childX}" y="${by}" width="${CHILD_W}" height="${BOX_H}" rx="6" fill="${color}" fill-opacity="0.14" stroke="${color}" stroke-width="1.25"/>`
-      + `<circle cx="${childX + 11}" cy="${by + 14}" r="3.5" fill="${color}"/>`
-      + `<text x="${childX + 22}" y="${by + 17}" style="font-size:11px;fill:var(--gray-1000)">${esc(truncTxt(it.label, 22))}</text>`
-      + `<text x="${childX + 11}" y="${by + 30}" style="font-size:9px;fill:var(--gray-700)">${it.kind} · ${fmtMs(it.dur)} · ${fmtUsdShort(it.cost)}</text>`
-      + `<title>${esc(it.label)} · ${it.kind} · ${fmtMs(it.dur)} · ${fmtUsdShort(it.cost)}${it.extra ? ' · ' + esc(it.extra) : ''}</title></g>`,
+// Build the FULL nested tree: session → workflows → their agents; session → direct
+// subagents → their nested subagents. `wfDetails` is a Map(runId → /v1/observed/:id).
+function buildSessionTree(workflows, sub, wfDetails) {
+  const index = new Map();
+  const reg = (n) => { index.set(n.id, n); return n; };
+  const root = reg({ id: 'session', kind: 'session', label: 'main session', parentId: null, children: [] });
+  const wfItems = (workflows || [])
+    .map((w) => ({ w, s: w.startedAt ? Date.parse(w.startedAt) : (w.timestamp && w.durationMs ? Date.parse(w.timestamp) - w.durationMs : 0) }))
+    .filter((x) => x.s).sort((a, b) => a.s - b.s);
+  for (const { w } of wfItems) {
+    const wf = reg({ id: 'wf:' + w.runId, kind: 'workflow', label: w.name || w.runId, navKind: 'wf', navId: w.runId, cost: w.costUsd, ms: w.durationMs, parentId: root.id, children: [] });
+    root.children.push(wf);
+    const det = wfDetails && wfDetails.get(w.runId);
+    const calls = (det && det.telemetry && det.telemetry.calls) || [];
+    calls.forEach((c, i) => wf.children.push(reg({ id: wf.id + ':a' + i, kind: 'wagent', label: c.label || ('agent ' + (i + 1)), navKind: 'wf', navId: w.runId, cost: c.costUsd, ms: c.ms, tier: c.tier, parentId: wf.id, children: [] })));
+  }
+  const mapSub = (n, parentId) => {
+    const node = reg({ id: 'sub:' + n.agentId, kind: 'subagent', label: n.description || n.agentId, navKind: 'sub', navId: n.agentId, cost: n.costUsd, ms: n.ms, tier: n.tier, parentId, children: [] });
+    for (const c of (n.children || [])) node.children.push(mapSub(c, node.id));
+    return node;
+  };
+  for (const c of ((sub && sub.root && sub.root.children) || [])) root.children.push(mapSub(c, root.id));
+  return { root, index };
+}
+// Left-rooted layout: x = depth, y = post-order leaf row (parents centered on children).
+function layoutSessionTree(root) {
+  const positions = new Map();
+  let rowCounter = 0, maxDepth = 0;
+  const assign = (node, depth) => {
+    maxDepth = Math.max(maxDepth, depth);
+    if (!node.children.length) { const r = rowCounter++; positions.set(node.id, { depth, row: r }); return r; }
+    const rs = node.children.map((c) => assign(c, depth + 1));
+    const r = (rs[0] + rs[rs.length - 1]) / 2;
+    positions.set(node.id, { depth, row: r });
+    return r;
+  };
+  assign(root, 0);
+  return { positions, rows: rowCounter, maxDepth };
+}
+
+let sessionNestedIndex = null; // id → node, for hover branch-highlight
+function buildSessionNodesSvg(workflows, sub, wfDetails) {
+  const tree = buildSessionTree(workflows, sub, wfDetails);
+  if (!tree.root.children.length) return ctEmptyHtml('Nothing launched in this session yet', 'When the session runs a Workflow or spawns a subagent, it appears here.', '');
+  sessionNestedIndex = tree.index;
+  const { positions, rows, maxDepth } = layoutSessionTree(tree.root);
+  const LEVEL_W = 200, ROW_H = 22, padX = 12, padTop = 12, BOX_W = 178, BOX_H = 17;
+  const W = padX * 2 + (maxDepth + 1) * LEVEL_W;
+  const H = padTop * 2 + Math.max(1, rows) * ROW_H;
+  const KC = { session: '#8a8f98', workflow: '#6366f1', wagent: '#818cf8', subagent: '#14b8a6' };
+  const edges = [], nodes = [];
+  const emit = (node) => {
+    const p = positions.get(node.id); const px = padX + p.depth * LEVEL_W, py = padTop + p.row * ROW_H;
+    for (const c of node.children) {
+      const cp = positions.get(c.id); const cx = padX + cp.depth * LEVEL_W, cy = padTop + cp.row * ROW_H;
+      const x1 = px + BOX_W, y1 = py + BOX_H / 2, x2 = cx, y2 = cy + BOX_H / 2, mx = (x1 + x2) / 2;
+      edges.push(`<path class="sedge" data-echild="${esc(c.id)}" d="M ${x1} ${y1.toFixed(1)} H ${mx.toFixed(1)} V ${y2.toFixed(1)} H ${x2}" stroke="${KC[c.kind] || '#888'}" stroke-width="1" fill="none"/>`);
+      emit(c);
+    }
+    const color = KC[node.kind] || '#888';
+    const nav = (node.navKind && node.navId) ? ` data-nav-kind="${node.navKind}" data-nav-id="${esc(node.navId)}"` : '';
+    nodes.push(
+      `<g class="snode" data-node-id="${esc(node.id)}"${nav} style="cursor:${nav ? 'pointer' : 'default'}">`
+      + `<rect x="${px}" y="${py}" width="${BOX_W}" height="${BOX_H}" rx="3" fill="${color}" fill-opacity="0.16" stroke="${color}" stroke-width="0.9"/>`
+      + `<circle cx="${px + 7}" cy="${py + BOX_H / 2}" r="2.4" fill="${color}"/>`
+      + `<text x="${px + 14}" y="${py + 12}" style="font-size:9px;fill:var(--gray-1000)">${esc(truncTxt(node.label, 28))}</text>`
+      + `<title>${esc(node.label)}${node.kind !== 'session' ? ' · ' + node.kind : ''}${node.ms != null ? ' · ' + fmtMs(node.ms) : ''}${node.cost != null ? ' · ' + fmtUsdShort(node.cost) : ''}</title></g>`,
     );
-  });
-  const rootBox = `<g><rect x="${padX}" y="${rootY.toFixed(1)}" width="${ROOT_W}" height="${BOX_H}" rx="6" fill="#8a8f98" fill-opacity="0.18" stroke="var(--gray-700)" stroke-width="1.25"/>`
-    + `<circle cx="${padX + 11}" cy="${(rootY + 14).toFixed(1)}" r="4" fill="var(--gray-700)"/>`
-    + `<text x="${padX + 22}" y="${(rootY + 17).toFixed(1)}" style="font-size:11px;font-weight:600;fill:var(--gray-1000)">main session</text>`
-    + `<text x="${padX + 11}" y="${(rootY + 30).toFixed(1)}" style="font-size:9px;fill:var(--gray-700)">${items.length} launched</text></g>`;
-  const svg = `<svg viewBox="0 0 ${W} ${H}" data-w="${W}" data-h="${H}" width="${W}" style="height:auto;font-family:ui-monospace,monospace">${edges.join('')}${rootBox}${boxes.join('')}</svg>`;
+  };
+  emit(tree.root);
+  const svg = `<svg viewBox="0 0 ${W} ${H}" data-w="${W}" data-h="${H}" width="${W}" style="height:auto;font-family:ui-monospace,monospace">${edges.join('')}${nodes.join('')}</svg>`;
   const zoombar = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">`
     + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="out" aria-label="Zoom out">−</button>`
     + `<span id="node-zoom-label" class="mono" style="font-size:11px;color:var(--gray-700);min-width:42px;text-align:center"></span>`
     + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="in" aria-label="Zoom in">+</button>`
     + `<button class="btn btn-tertiary btn-sm" type="button" data-nodezoom="fit">Fit</button>`
-    + `<span class="muted" style="font-size:11px;margin-left:6px">${items.length} nodes · scroll to pan, ⌘/Ctrl+scroll to zoom</span></div>`;
+    + `<span class="muted" style="font-size:11px;margin-left:6px">${tree.index.size - 1} nodes · scroll to pan, ⌘/Ctrl+scroll to zoom · hover a node to trace its branch</span></div>`;
+  const sw = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:2px;background:${c};display:inline-block"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
+  const legend = `<div style="margin-top:6px">${sw(KC.workflow, 'Workflow')}${sw(KC.wagent, 'Workflow agent')}${sw(KC.subagent, 'Subagent (& nested)')}</div>`;
   return zoombar
-    + `<div class="node-canvas" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:10px;display:flex;justify-content:safe center;align-items:safe center">${svg}</div>`
-    + sessionLegend()
-    + '<div class="muted" style="font-size:11px;margin-top:6px">The main session (left) and everything it launched. Click a node to open it in its tab.</div>';
+    + `<div class="node-canvas nested" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:10px">${svg}</div>`
+    + legend
+    + '<div class="muted" style="font-size:11px;margin-top:6px">Everything the session ran, nested (workflow → its agents; subagent → nested). All faint — hover a node to light up its branch. Click a workflow/subagent to open it.</div>';
 }
 
 let sessionNodeZoom = 'fit'; // 'fit' | number
@@ -2304,7 +2357,11 @@ function applySessionNodeZoom() {
   if (z === 'fit') {
     const availW = Math.max(140, canvas.clientWidth - 20);
     const availH = Math.max(140, canvas.clientHeight - 20);
-    z = Math.min(1, availW / W, availH / H);
+    // The nested tree is tall & narrow — fit to WIDTH and scroll vertically so nodes stay
+    // legible/hoverable; the flat view (if ever used) fits both dimensions.
+    z = canvas.classList.contains('nested')
+      ? Math.min(1, availW / W)
+      : Math.min(1, availW / W, availH / H);
   }
   z = Math.max(0.2, Math.min(2.5, z));
   svg.style.width = (W * z).toFixed(0) + 'px';
@@ -2435,6 +2492,29 @@ document.getElementById('session-waterfall-wrap')?.addEventListener('wheel', (e)
   sessionNodeZoom = e.deltaY < 0 ? cur * 1.12 : cur * 0.9;
   applySessionNodeZoom();
 }, { passive: false });
+// Hover a node in the nested graph → light up its whole branch (self + ancestors + descendants).
+function clearNodeHover(canvas) {
+  if (!canvas) return;
+  canvas.classList.remove('hovering');
+  canvas.querySelectorAll('.hl').forEach((x) => x.classList.remove('hl'));
+}
+document.getElementById('session-waterfall-wrap')?.addEventListener('mouseover', (e) => {
+  const canvas = e.target.closest('.node-canvas.nested'); if (!canvas || !sessionNestedIndex) return;
+  const g = e.target.closest('.snode');
+  if (!g) { clearNodeHover(canvas); return; }
+  const id = g.getAttribute('data-node-id');
+  const set = new Set([id]);
+  let p = sessionNestedIndex.get(id)?.parentId; // ancestors
+  while (p) { set.add(p); p = sessionNestedIndex.get(p)?.parentId; }
+  const stack = [...(sessionNestedIndex.get(id)?.children || [])]; // descendants
+  while (stack.length) { const c = stack.pop(); set.add(c.id); stack.push(...(c.children || [])); }
+  canvas.classList.add('hovering');
+  canvas.querySelectorAll('.snode').forEach((n) => n.classList.toggle('hl', set.has(n.getAttribute('data-node-id'))));
+  canvas.querySelectorAll('.sedge').forEach((ed) => ed.classList.toggle('hl', set.has(ed.getAttribute('data-echild'))));
+});
+document.getElementById('session-waterfall-wrap')?.addEventListener('mouseleave', () => {
+  clearNodeHover(document.querySelector('#session-waterfall-wrap .node-canvas.nested'));
+});
 window.addEventListener('resize', () => { if (sessionView === 'nodes' && sessionNodeZoom === 'fit') applySessionNodeZoom(); });
 
 function setTab(tab) {
