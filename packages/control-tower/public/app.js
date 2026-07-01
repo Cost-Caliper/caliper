@@ -2225,15 +2225,22 @@ async function loadSessionWaterfall() {
 }
 // Fetch + cache each workflow's /v1/observed/:id (has telemetry.calls with per-call model+cost).
 // Shared by the nested node view and the session insight's per-model bar segmentation.
+// The in-flight promise is memoized on lastSession so concurrent callers (initial insight
+// enrichment + the Nodes view) share ONE fetch burst instead of firing duplicates.
 async function loadWfDetails() {
   if (!lastSession) return new Map();
   if (lastSession.wfDetails) return lastSession.wfDetails;
+  if (lastSession.wfDetailsPromise) return lastSession.wfDetailsPromise;
   const token = lastSession;
-  const entries = await Promise.all((lastSession.workflows || []).map((w) =>
-    apiFetch(`/v1/observed/${encodeURIComponent(w.runId)}`).then((d) => [w.runId, d]).catch(() => [w.runId, null])));
-  if (lastSession !== token) return lastSession.wfDetails || new Map();
-  lastSession.wfDetails = new Map(entries);
-  return lastSession.wfDetails;
+  token.wfDetailsPromise = Promise.all((token.workflows || []).map((w) =>
+    apiFetch(`/v1/observed/${encodeURIComponent(w.runId)}`).then((d) => [w.runId, d]).catch(() => [w.runId, null]),
+  )).then((entries) => {
+    if (lastSession !== token) return (lastSession && lastSession.wfDetails) || new Map();
+    token.wfDetails = new Map(entries);
+    token.wfDetailsFailed = entries.filter(([, d]) => !d).length; // shown as "partial" in the insight
+    return token.wfDetails;
+  });
+  return token.wfDetailsPromise;
 }
 async function renderSessionView() {
   const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap || !lastSession) return;
@@ -2324,15 +2331,20 @@ let sessionTree = null;           // {root, index} for the currently-loaded data
 let sessionCollapsed = new Set();  // ids of folded nodes (their children are hidden)
 let sessionNodePos = null;        // VISIBLE id → {depth, row}, used for auto-scroll-into-view
 
-// Entry point: (re)build the tree from data and collapse every node-with-children by default,
-// so a huge session opens as a glanceable overview instead of a 200-row wall.
+// Entry point: (re)build the tree from data. Nodes-with-children default to collapsed so a
+// huge session opens as a glanceable overview — but the user's fold state survives view
+// toggles and refreshes: only nodes we haven't seen before get auto-collapsed.
+let sessionKnownFoldIds = new Set();
 function buildSessionNodesSvg(workflows, sub, wfDetails) {
   const tree = buildSessionTree(workflows, sub, wfDetails);
   if (!tree.root.children.length) return ctEmptyHtml('Nothing launched in this session yet', 'When the session runs a Workflow or spawns a subagent, it appears here.', '');
   sessionTree = tree;
   sessionNestedIndex = tree.index;
-  sessionCollapsed = new Set();
-  for (const node of tree.index.values()) { if (node.id !== 'session' && node.children.length) sessionCollapsed.add(node.id); }
+  sessionCollapsed = new Set([...sessionCollapsed].filter((id) => tree.index.has(id))); // drop stale ids
+  for (const node of tree.index.values()) {
+    if (node.id !== 'session' && node.children.length && !sessionKnownFoldIds.has(node.id)) sessionCollapsed.add(node.id);
+  }
+  sessionKnownFoldIds = new Set(tree.index.keys());
   return renderSessionNodes();
 }
 
@@ -2528,7 +2540,7 @@ function sessionTierUsage(workflows, sub, wfDetails) {
     if (!calls) continue;
     for (const c of calls) add(modelTier(c.model || c.tier), c.inTok, c.outTok, c.cacheCreationTok, c.cacheReadTok, c.costUsd, c.inferenceMs);
   }
-  for (const c of ((sub && sub.root && sub.root.children) || [])) {
+  for (const c of allSubNodes(sub && sub.root)) { // full forest — nested subagents count too
     const tk = c.tokens || {}; add(modelTier(c.model), tk.in, tk.out, tk.cacheWr, tk.cacheRd, c.costUsd, c.inferenceMs);
   }
   return t;
@@ -2563,13 +2575,14 @@ function renderSessionInsight(workflows, sub, wfDetails) {
     const e = w.timestamp ? Date.parse(w.timestamp) : (s + (w.durationMs || 0));
     items.push({ label: w.name || w.runId, kind: 'workflow', cost: w.costUsd || 0, meta: `${w.agentCount || 0} agents`, navKind: 'wf', navId: w.runId, startMs: s, endMs: e });
   }
-  for (const c of ((sub && sub.root && sub.root.children) || [])) {
+  for (const c of allSubNodes(sub && sub.root)) { // full forest — nested subagents count too
     const s = c.startedAtMs || (c.startedAt ? Date.parse(c.startedAt) : 0);
     const e = c.endedAt ? Date.parse(c.endedAt) : (s + (c.ms || 0));
     items.push({ label: c.description || c.agentId, kind: 'subagent', cost: c.costUsd || 0, meta: c.agentType || 'subagent', navKind: 'sub', navId: c.agentId, model: c.model, startMs: s, endMs: e });
   }
   if (!items.length) { host.innerHTML = ''; return; }
-  const total = items.reduce((a, b) => a + b.cost, 0) || 1;
+  const total = items.reduce((a, b) => a + b.cost, 0);      // real total — displayed as-is (may be $0)
+  const pctDenom = total > 0 ? total : 1;                   // division guard for percents only
   const wfCount = items.filter((i) => i.kind === 'workflow').length;
   const subCount = items.length - wfCount;
   const wfCost = items.filter((i) => i.kind === 'workflow').reduce((a, b) => a + b.cost, 0);
@@ -2579,32 +2592,38 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   const span = (starts.length && ends.length) ? Math.max(...ends) - Math.min(...starts) : 0;
   const ranked = [...items].sort((a, b) => b.cost - a.cost);
   const maxCost = ranked[0].cost || 1;
-  const pct = (c) => Math.round((c / total) * 100);
+  const pct = (c) => Math.round((c / pctDenom) * 100);
   const TOP = 5;
   const top = ranked.slice(0, TOP), rest = ranked.slice(TOP);
-  let cum = 0, paretoN = 0; for (const i of ranked) { cum += i.cost; paretoN++; if (cum / total >= 0.6) break; }
+  let cum = 0, paretoN = 0; for (const i of ranked) { cum += i.cost; paretoN++; if (cum / pctDenom >= 0.6) break; }
+
+  // Detail-load state: undefined = still fetching; a Map = done (nulls inside = failed fetches).
+  const detailsLoaded = wfDetails instanceof Map;
+  const failedDetails = detailsLoaded ? [...wfDetails.values()].filter((d) => !d).length : 0;
+  const partialNote = failedDetails ? `<span class="si-legend muted"> · partial — ${failedDetails} workflow detail${failedDetails === 1 ? '' : 's'} unavailable</span>` : '';
 
   // Session-wide cost by model (across every item whose split is known).
   const modelTotals = {}; let modelKnown = 0;
   for (const it of items) { const sp = itemModelSplit(it, wfDetails); if (sp) { for (const [t, c] of Object.entries(sp)) modelTotals[t] = (modelTotals[t] || 0) + c; modelKnown += it.cost; } }
   const modelsPresent = MODEL_ORDER.filter((t) => modelTotals[t]);
   const legend = modelsPresent.length
-    ? `<span class="si-legend">by model: ${modelsPresent.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} ${fmtUsdShort(modelTotals[t])} (${Math.round(modelTotals[t] / modelKnown * 100)}%)</span>`).join('')}</span>`
-    : (wfCount ? '<span class="si-legend muted">computing model split…</span>' : '');
+    ? `<span class="si-legend">by model: ${modelsPresent.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} ${fmtUsdShort(modelTotals[t])} (${Math.round(modelTotals[t] / (modelKnown || 1) * 100)}%)</span>`).join('')}${partialNote}</span>`
+    : (wfCount ? `<span class="si-legend muted">${detailsLoaded ? 'model split unavailable' : 'computing model split…'}</span>` : '');
 
-  // Measured generation speed per tier (real: output tokens ÷ inference time this session).
+  // Measured generation speed per tier (real: output tokens ÷ inference time; workflow
+  // agents only — the subagent list endpoint doesn't expose inference time).
   const usage = sessionTierUsage(workflows, sub, wfDetails);
   const speedTiers = MODEL_ORDER.filter((t) => tierGenSpeed(usage, t) != null);
   const speedLine = speedTiers.length
-    ? `<div class="si-speed" title="Output tokens ÷ model inference time, measured across this session's calls. Generation throughput only — not end-to-end run time (excludes tool execution and prompt processing).">`
-      + `measured generation speed: ${speedTiers.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} <strong>${Math.round(tierGenSpeed(usage, t))}</strong></span>`).join(' · ')} tok/s <span class="si-speed-note">· output ÷ inference time, not end-to-end</span></div>`
+    ? `<div class="si-speed" title="Output tokens ÷ model inference time, measured across this session's workflow agent calls (subagents don't report inference time here). Generation throughput only — not end-to-end run time (excludes tool execution and prompt processing).">`
+      + `measured generation speed (workflow agents): ${speedTiers.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} <strong>${Math.round(tierGenSpeed(usage, t))}</strong></span>`).join(' · ')} tok/s <span class="si-speed-note">· output ÷ inference time, not end-to-end</span></div>`
     : '';
 
   const spanTxt = siDur(span);
   const headline = `<span style="color:var(--gray-1000)">${wfCount} workflow${wfCount === 1 ? '' : 's'}</span> and `
     + `<span style="color:var(--gray-1000)">${subCount} subagent${subCount === 1 ? '' : 's'}</span> · `
-    + `<span style="color:var(--gray-1000)">${fmtUsdShort(total)} estimated</span>${spanTxt ? ` · spanned ${spanTxt}` : ''} · `
-    + `the top <span style="color:var(--gray-1000)">${paretoN}</span> account for ~60% of the spend`;
+    + `<span style="color:var(--gray-1000)">${fmtUsdShort(total)} estimated</span>${spanTxt ? ` · spanned ${spanTxt}` : ''}`
+    + (total > 0 ? ` · the top <span style="color:var(--gray-1000)">${paretoN}</span> account for ~60% of the spend` : '');
 
   // Bar = width by cost share of the biggest item; internally segmented by model.
   const barHtml = (i) => {
@@ -2633,7 +2652,9 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   let chips = chip('Workflows', fmtUsdShort(wfCost), `${pct(wfCost)}% of spend`)
     + chip('Subagents', fmtUsdShort(subCost), `${pct(subCost)}% of spend`)
     + chip('Biggest single', fmtUsdShort(biggest.cost), esc(truncTxt(biggest.label, 22)));
-  if (savings) chips += chip('Potential savings', fmtUsdShort(savings.save), `${savings.pct}% at OSS prices`, savings.save > 0 ? 'si-chip-save' : 'si-chip-warn');
+  // Chip subtitle is hedged: savings.pct's denominator is the re-priceable Claude-tier spend
+  // (with loaded details), NOT the headline total — don't let it read as session-wide.
+  if (savings) chips += chip('Potential savings', fmtUsdShort(savings.save), `${savings.pct}% of Claude-tier spend${failedDetails ? ' · partial' : ''}`, savings.save > 0 ? 'si-chip-save' : 'si-chip-warn');
 
   // Multiplier ("11× cheaper") — how many times cheaper the substitute is.
   const multTxt = (cur, alt) => {
@@ -2651,7 +2672,7 @@ function renderSessionInsight(workflows, sub, wfDetails) {
       + `<span class="si-ssave ${l.save >= 0 ? 'pos' : 'neg'}">${l.save >= 0 ? 'save ' : '+'}${fmtUsdShort(Math.abs(l.save))}</span>`
       + `<span class="si-smult ${l.save >= 0 ? 'pos' : 'neg'}">${multTxt(l.cur, l.subCost)}</span></div>`;
     savePanel = `<div class="si-save">`
-      + `<div class="si-lb-title">Potential savings<a class="si-ast" href="#si-method">*</a> — swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF}</span></div>`
+      + `<div class="si-lb-title">Potential savings<a class="si-ast" href="#si-method">*</a> — swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF}</span>${partialNote}</div>`
       + savings.lines.map(srow).join('')
       + `<div class="si-stotal">≈ <strong>${fmtUsdShort(savings.alt)}</strong> instead of <strong>${fmtUsdShort(savings.cur)}</strong> on these tiers — save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%, <strong>${multTxt(savings.cur, savings.alt)}</strong>)</div></div>`;
   }
@@ -2881,3 +2902,8 @@ document.querySelectorAll('.tabbar-btn').forEach((b) => b.addEventListener('clic
 
 init();
 setTab('session');
+
+// Debug/QA handle (module scope hides everything otherwise). Read-only-ish: used by
+// browser-based smoke tests to exercise edge cases (zero-cost, partial details) against
+// the real render path. Not a public API.
+window.__wflens = { renderSessionInsight, loadWfDetails, getSession: () => lastSession };
