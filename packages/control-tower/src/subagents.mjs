@@ -288,6 +288,8 @@ export function reconstructSubagent(sessDir, agentId) {
     toolMs: p.toolMs || 0,
     task: p.task || null,
     output: p.output || null,
+    conversation: p.conversation || [],
+    droppedTurns: p.droppedTurns || 0,
     tools: p.tools || [],
     toolCalls: p.toolCalls || 0,
     turns: p.assistantTurns || 0,

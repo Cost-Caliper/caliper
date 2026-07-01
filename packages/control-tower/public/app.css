@@ -1537,3 +1537,41 @@ select.input {
 .sub-crumb-btn:hover { text-decoration: underline; }
 .sub-crumb-sep { color: var(--gray-500); font-size: 11px; }
 .sub-crumb-here { color: var(--gray-700); font-size: 12px; }
+
+/* Clickable trace rows (each opens that exact step) */
+.trace-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.trace-row:hover { background: var(--gray-200); }
+
+/* Conversation — the full agent↔user back-and-forth */
+.conv-details { margin: 0 0 10px; }
+.conv-details > summary { font-size: 12px; color: var(--gray-900); cursor: pointer; padding: 4px 0; list-style: none; }
+.conv-details > summary::-webkit-details-marker { display: none; }
+.conv-details > summary::before { content: '▸'; margin-right: 6px; color: var(--gray-700); font-size: 10px; }
+.conv-details[open] > summary::before { content: '▾'; }
+.conv-details > summary:hover { color: var(--gray-1000); }
+.conv-scroll { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-200); }
+.conv-turn { display: grid; grid-template-columns: 52px 1fr; gap: 8px; padding: 6px 8px; border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.conv-turn:first-child { border-top: 0; }
+.conv-role { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--gray-700); padding-top: 2px; }
+.conv-user .conv-role { color: var(--blue); }
+.conv-text { margin: 0; font-size: 11px; line-height: 1.5; white-space: pre-wrap; color: var(--gray-1000); font-family: var(--font-mono); }
+.conv-user .conv-text { color: var(--gray-900); }
+
+/* Main-conversation trace on the Active Session tab */
+.main-trace-summary { font-size: 12.5px; color: var(--gray-900); cursor: pointer; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--gray-100); list-style: none; }
+.main-trace-summary::-webkit-details-marker { display: none; }
+.main-trace-summary::before { content: '▸ '; color: var(--gray-700); }
+#session-main-trace[open] .main-trace-summary::before { content: '▾ '; }
+.main-trace-summary:hover { color: var(--gray-1000); border-color: var(--border-hover); }
+.main-trace-body { padding: 4px 2px 0; }
+
+/* "live" pill — session transcript updated in the last 2 minutes */
+.sess-live-pill {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 55%, transparent);
+  border-radius: 999px; padding: 1px 7px; margin-left: 8px; vertical-align: 1px;
+  animation: livepulse 2s ease-in-out infinite;
+}
+@keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+/* Disabled fold buttons explain themselves via title; dim them clearly */
+#sub-expand-all:disabled, #sub-collapse-all:disabled { opacity: .35; cursor: help; }

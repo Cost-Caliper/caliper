@@ -1724,7 +1724,7 @@ function renderCallDetailInto(slot, c) {
     const name = isTool
       ? (s.tools && s.tools.length ? 'Tool · ' + esc(s.tools.join(', ')) : 'Tool execution')
       : 'Inference';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:3px 6px;font-size:12px;border-top:1px solid var(--border)">`
+    return `<div class="trace-row" data-trace-idx="${n}" title="Click to see exactly what this step did">`
       + `<span class="mono" style="color:var(--gray-500);min-width:22px;text-align:right">${n + 1}</span>`
       + `<span class="tl-tip-dot" style="background:${dot}"></span>`
       + `<span style="color:var(--gray-1000);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>`
@@ -1743,10 +1743,30 @@ function renderCallDetailInto(slot, c) {
     + traceSection
     + `<div style="font-size:12px;color:var(--gray-900);margin-bottom:4px">Task — the prompt this agent received</div>`
     + `<pre style="background:var(--bg-200);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:240px;overflow:auto;color:var(--gray-1000);margin:0 0 10px">${esc(c.task || '(no prompt captured)')}</pre>`
+    + conversationHtml(c)
     + `<div style="font-size:12px;color:var(--gray-900);margin-bottom:4px">Output — its last assistant text</div>`
     + `<pre style="background:var(--bg-200);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:200px;overflow:auto;color:var(--gray-1000);margin:0">${esc(c.output || '(no text output — tool-only turn)')}</pre>`;
+  currentTraceDetail = c; // trace-row clicks resolve their step against this detail
   slot.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
+// The full back-and-forth (every user↔assistant text, in order) — collapsed by default.
+let currentTraceDetail = null;
+function conversationHtml(c) {
+  const conv = c.conversation || [];
+  if (!conv.length) return '';
+  const rows = conv.map((t) => `<div class="conv-turn conv-${t.role === 'user' ? 'user' : 'asst'}">`
+    + `<span class="conv-role">${t.role === 'user' ? 'user' : 'agent'}</span>`
+    + `<pre class="conv-text">${esc(t.text || '')}</pre></div>`).join('');
+  const dropped = c.droppedTurns ? `<div class="muted" style="font-size:11px;padding:4px 6px">${fmtN(c.droppedTurns)} earlier turn${c.droppedTurns === 1 ? '' : 's'} not shown (showing the most recent ${fmtN(conv.length)}).</div>` : '';
+  return `<details class="conv-details"><summary>Conversation — every agent ↔ user text, in order (${fmtN(conv.length)}${c.droppedTurns ? ' of ' + fmtN(conv.length + c.droppedTurns) : ''} turns)</summary>`
+    + `<div class="conv-scroll">${dropped}${rows}</div></details>`;
+}
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-trace-idx]');
+  if (!t || !currentTraceDetail) return;
+  const seg = (currentTraceDetail.segments || [])[Number(t.dataset.traceIdx)];
+  if (seg) openCallDrawer(currentTraceDetail, seg);
+});
 
 // Expand/collapse one accordion item; lazy-fetch + cache the run on first open.
 async function toggleItem(item) {
@@ -1845,6 +1865,16 @@ async function loadSubagentTree() {
   catch (err) { wrap.innerHTML = `<p class="muted" style="padding:12px">Could not load subagents: ${esc(err.message)}</p>`; return; }
   subForest = data;
   renderSubHeader(data);
+  // Expand/Collapse all only do anything when some subagent has children (nesting).
+  // In a flat forest they'd be silent no-ops — disable them and say why.
+  {
+    let collapsible = false;
+    walkForest(data && data.root, (n) => { if (n.agentId !== MAIN_SESSION_ID && (n.childCount || 0) > 0) collapsible = true; });
+    for (const id of ['sub-expand-all', 'sub-collapse-all']) {
+      const b = document.getElementById(id);
+      if (b) { b.disabled = !collapsible; b.title = collapsible ? '' : 'Nothing to fold — all subagents here are direct children (no nesting)'; }
+    }
+  }
   if (!data || !data.root || !data.rollup || data.rollup.totalSubagents === 0) {
     const hint = data?.cwd ? `Watching <code>${esc(homeAbbrev(data.cwd))}</code>` : (data?.sessionId ? '' : 'Set <code>WFLENS_SESSION_DIR</code> to a session dir.');
     const g = subEls.graph(); if (g) g.hidden = true;
@@ -2154,6 +2184,7 @@ document.getElementById('tab-subagents')?.addEventListener('click', (e) => {
   if (e.target.closest('[data-crumb-back]')) {
     const slot = subEls.slot(); if (slot) slot.hidden = true;
     subEls.wrap()?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    pushNav(null); // record "back at the list" so browser Back/Forward stays coherent
     return;
   }
   if (e.target.closest('[data-crumb-main]')) selectSubagent(MAIN_SESSION_ID);
@@ -2167,6 +2198,7 @@ async function selectSubagent(agentId) {
     subCache.set(agentId, detail);
   }
   renderSubagentDetail(detail);
+  pushNav(agentId); // drill-in gets its own history entry → browser Back closes it
 }
 
 // One delegated handler for the whole Subagents panel: drawer-close, segment → step drawer,
@@ -2263,6 +2295,38 @@ async function loadWfDetails() {
   });
   return token.wfDetailsPromise;
 }
+// Lazy main-conversation trace on the Active Session tab (John: "include a trace like
+// the subagents tab but for the main agent"). Fetched on first open, per session.
+let mainTraceLoadedFor = null;
+document.getElementById('session-main-trace')?.addEventListener('toggle', async (e) => {
+  const det = e.target; if (!det.open) return;
+  const body = document.getElementById('session-main-trace-body'); if (!body) return;
+  if (mainTraceLoadedFor === currentSessionId && body.childElementCount) return; // cached for this session
+  body.innerHTML = '<p class="muted" style="padding:10px;font-size:12px">Reconstructing the conversation…</p>';
+  let detail = null;
+  try { const res = await fetch(`/v1/subagents/${encodeURIComponent(MAIN_SESSION_ID)}`); if (!res.ok) throw new Error('HTTP ' + res.status); detail = await res.json(); }
+  catch (err) { body.innerHTML = `<p class="muted" style="padding:10px;font-size:12px">Could not load the main trace: ${esc(err.message)}</p>`; return; }
+  mainTraceLoadedFor = currentSessionId;
+  detail.label = detail.label || 'main conversation';
+  const inner = document.createElement('div');
+  body.innerHTML = '';
+  const tl = document.createElement('div');
+  tl.innerHTML = '<div style="font-size:12px;color:var(--gray-900);margin:8px 0 4px">Timeline — inference vs tool (click a segment for the exact step)</div>'
+    + `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg([detail])}</div>`
+    + timelineLegend([detail]);
+  body.appendChild(tl);
+  body.appendChild(inner);
+  renderCallDetailInto(inner, detail);
+});
+// Timeline-segment clicks inside the main trace → the exact step (same drawer as elsewhere).
+document.getElementById('session-main-trace')?.addEventListener('click', (e) => {
+  const segEl = e.target.closest('[data-seg-idx]');
+  if (segEl && currentTraceDetail) {
+    const seg = (currentTraceDetail.segments || [])[Number(segEl.dataset.segIdx)];
+    if (seg) openCallDrawer(currentTraceDetail, seg);
+  }
+});
+
 async function renderSessionView() {
   const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap || !lastSession) return;
   const { workflows, sub } = lastSession;
@@ -2994,10 +3058,11 @@ function renderSessionsList() {
       if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
       if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
       const activePill = s.id === activeId ? '<span class="sess-active-pill">active</span>' : '';
+      const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
       const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
       html += `<button class="sess-row${ghost}" type="button" data-session-id="${esc(s.id)}" title="${esc(s.id)}${s.cwd ? ' · ' + esc(s.cwd) : ''}">`
         + `<span class="sess-time mono">${s._ms ? sessClock(s._ms) : '—'}</span>`
-        + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 96))}${activePill}</span>`
+        + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 96))}${activePill}${livePill}</span>`
         + `<span class="sess-badges">${badges.join('')}</span>`
         + `<span class="sess-dur mono muted">${s.ms ? fmtMs(s.ms) : '—'}</span>`
         + `<span class="sess-turns mono muted" title="assistant turns">${fmtN(s.turns)}t</span>`
@@ -3014,6 +3079,9 @@ function renderSessionsList() {
 }
 function resetSessionCaches() {
   lastSession = null; sessionsData = null; sessionCollapsed = new Set(); sessionKnownFoldIds = new Set(); sessionNestedIndex = null; sessionTree = null;
+  mainTraceLoadedFor = null;
+  const mt = document.getElementById('session-main-trace');
+  if (mt) { mt.open = false; const b = document.getElementById('session-main-trace-body'); if (b) b.innerHTML = ''; }
   try { runCache.clear(); } catch { /* not defined yet */ }
   try { subCache.clear(); } catch { /* not defined yet */ }
 }
@@ -3021,6 +3089,7 @@ async function selectSession(id) {
   try { await apiFetch('/v1/session/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); }
   catch (err) { alert('Could not select session: ' + err.message); return; }
   resetSessionCaches();
+  currentSessionId = id; // so the pushed history entry carries the new session
   setTab('session'); // Active Session tab reloads everything from the newly-selected session
 }
 document.getElementById('sessions-list')?.addEventListener('click', (e) => {
@@ -3031,6 +3100,47 @@ document.getElementById('sessions-list')?.addEventListener('click', (e) => {
 });
 document.getElementById('sessions-refresh')?.addEventListener('click', async () => { projectsData = null; await loadSessionsBrowser(); });
 
+// ── Browser-history navigation ───────────────────────────────────────────────
+// Every meaningful move (tab switch, session switch, subagent drill-in) pushes a
+// history entry with a shareable hash (#/tab/sessionId/agentId), so the browser
+// back/forward buttons walk your trail — including "back from a subagent".
+let currentTab = 'sessions';
+let currentSessionId = null;
+let navApplying = false; // true while restoring from popstate/deep-link (don't re-push)
+function navHash(sub = null) {
+  return '#/' + currentTab + (currentSessionId ? '/' + currentSessionId : '') + (sub ? '/' + sub : '');
+}
+function pushNav(sub = null) {
+  if (navApplying) return;
+  const st = { tab: currentTab, sessionId: currentSessionId, sub };
+  const hash = navHash(sub);
+  if (location.hash === hash) return; // no-op moves don't pollute the stack
+  history.pushState(st, '', hash);
+}
+function parseNavHash(h) {
+  const m = String(h || '').match(/^#\/([a-z]+)(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?(?:\/([\w-]+))?$/i);
+  return m ? { tab: m[1], sessionId: m[2] || null, sub: m[3] || null } : null;
+}
+async function applyNavState(st) {
+  if (!st) return;
+  navApplying = true;
+  try {
+    if (st.sessionId && st.sessionId !== currentSessionId) {
+      try {
+        await apiFetch('/v1/session/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: st.sessionId }) });
+        currentSessionId = st.sessionId;
+        resetSessionCaches();
+      } catch { /* session may be gone — land on the tab anyway */ }
+    }
+    setTab(st.tab || 'sessions');
+    if (st.tab === 'subagents') {
+      if (st.sub) selectSubagent(st.sub);
+      else { const slot = subEls.slot(); if (slot) slot.hidden = true; }
+    }
+  } finally { navApplying = false; }
+}
+window.addEventListener('popstate', (e) => { applyNavState(e.state || parseNavHash(location.hash)); });
+
 // ── Active-session identity strip ────────────────────────────────────────────
 // Always tells you WHICH session the drill-in tabs (Active Session / Workflows /
 // Subagents) are showing: its starting prompt, when it ran, what it cost — plus a
@@ -3040,6 +3150,7 @@ async function refreshSessionStrip() {
   const strip = document.getElementById('active-session-strip'); if (!strip || strip.hidden) return;
   let data = null;
   try { data = await apiFetch('/v1/session/active'); } catch { /* server unreachable — leave as-is */ }
+  if (data && data.sessionId) currentSessionId = data.sessionId;
   const s = data && data.session;
   if (!s) {
     strip.innerHTML = `<span class="sess-strip-label">No session selected</span>`
@@ -3051,8 +3162,9 @@ async function refreshSessionStrip() {
   const badges = []
   if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
   if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  const liveNow = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now">live</span>' : '';
   strip.innerHTML = `<span class="sess-strip-label">Viewing session</span>`
-    + `<span class="sess-strip-title" title="${esc(s.title || s.id)}">“${esc(truncTxt(s.title || '(no prompt captured)', 90))}”</span>`
+    + `<span class="sess-strip-title" title="${esc(s.title || s.id)}">“${esc(truncTxt(s.title || '(no prompt captured)', 90))}”</span>${liveNow}`
     + `<span class="sess-strip-meta mono" title="conversation cost — workflows/subagents add more (see Active Session for the full total)">${startMs ? sessDayLabel(startMs) + ' ' + sessClock(startMs) : ''} · ${fmtUsdShort(s.costUsd)}</span>`
     + badges.join('')
     + `<button class="sess-strip-switch" type="button" data-goto-sessions title="Back to the session list">switch session ↗</button>`;
@@ -3075,6 +3187,8 @@ function setTab(tab) {
     b.setAttribute('aria-selected', sel ? 'true' : 'false');
     b.classList.toggle('active', sel);
   });
+  currentTab = tab;
+  pushNav(); // history entry per tab move (no-op while restoring from popstate)
   // Identity strip: visible on every drill-in tab, hidden on the Sessions list itself.
   const strip = document.getElementById('active-session-strip');
   if (strip) { strip.hidden = !['session', 'observe', 'subagents'].includes(tab); if (!strip.hidden) refreshSessionStrip(); }
@@ -3086,7 +3200,12 @@ function setTab(tab) {
 document.querySelectorAll('.tabbar-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
 init();
-setTab('sessions');
+// Deep-link support: #/tab/sessionId/agentId restores the exact spot; else land on Sessions.
+{
+  const st = parseNavHash(location.hash);
+  if (st) { applyNavState(st).then(() => history.replaceState(st, '', location.hash)); }
+  else { navApplying = true; setTab('sessions'); navApplying = false; history.replaceState({ tab: 'sessions', sessionId: null, sub: null }, '', '#/sessions'); }
+}
 
 // Debug/QA handle (module scope hides everything otherwise). Read-only-ish: used by
 // browser-based smoke tests to exercise edge cases (zero-cost, partial details) against

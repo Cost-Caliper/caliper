@@ -260,6 +260,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
   let task = null       // first user message = the prompt/task this agent received
   let taskTitle = null  // first HUMAN-looking user message (skips leading harness tag blocks)
   let output = null     // latest assistant text = its answer
+  const conversation = [] // full mode: EVERY user↔assistant text, in order (capped on return)
   let assistantTurns = 0
   let toolCalls = 0
   const tools = new Set()
@@ -316,6 +317,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
       // Title candidate: the first user message that reads like a HUMAN prompt (main-session
       // transcripts often open with harness tag blocks like <local-command-caveat>…).
       if (taskTitle === null) { const t = textOf(msg.content).trim(); if (t && !t.startsWith('<')) taskTitle = t }
+      if (!light) { const t = textOf(msg.content).trim(); if (t) conversation.push({ role: 'user', ts: entry.timestamp || null, text: trunc(t, 2000) }) }
       continue
     }
     if (entry.type !== 'assistant') continue
@@ -343,6 +345,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
       tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses,
       usage, stopReason: msg.stop_reason || null, model: msg.model || null, thinking: trunc(thinkingOf(msg.content), 8000),
     })
+    if (!light && turnText) conversation.push({ role: 'assistant', ts: entry.timestamp || null, text: trunc(turnText, 2000) })
     if (turnText) output = turnText
     const ts = entry.timestamp || null
     if (ts) {
@@ -364,9 +367,14 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
 
   events.sort((a, b) => a.tsMs - b.tsMs)
   const { segments, inferenceMs, toolMs } = buildSegments(events)
+  // Conversation cap: keep the LAST 500 texts (recent turns matter most for review);
+  // droppedTurns says how many older ones were cut so the UI can be honest about it.
+  const CONV_CAP = 500
+  const droppedTurns = Math.max(0, conversation.length - CONV_CAP)
   return {
     model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
     task: trunc(task, 8000), output: trunc(output, 20000),
+    conversation: conversation.slice(-CONV_CAP), droppedTurns,
     assistantTurns, toolCalls, tools: [...tools], agentCalls,
     segments, inferenceMs, toolMs,
   }
