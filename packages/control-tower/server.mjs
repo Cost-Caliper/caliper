@@ -31,18 +31,29 @@ import { deriveOptimizations } from './src/optimize.mjs'
 import { distillLearnings, groundingCheck } from '../workflow-lens/src/learnings.mjs'
 import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns, readRunScript } from './src/observer.mjs'
 import { scanSubagentTree, reconstructSubagent } from './src/subagents.mjs'
+import { scanProjectSessions, summarizeSessionFile, listProjects } from './src/sessions.mjs'
+import { homedir } from 'node:os'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.PORT || '8787', 10)
 const LENSVERSION = '0.1.0'  // workflow-lens version (from its package.json)
 
 // ── Bridge: session dir + beacon store ───────────────────────────────────────
-const SESS = resolveSessionDir()
+// SESS and PROJECT_DIR are MUTABLE: the Sessions browser can switch the active
+// project (folder) and session at runtime (POST /v1/project/select, /v1/session/select).
+// All observed/subagents routes read SESS at call time. PROJECTS_ROOT is fixed:
+// the ~/.claude/projects dir that holds one subdir per project the user ran Claude in.
+let SESS = resolveSessionDir()
+let PROJECT_DIR = SESS ? dirname(String(SESS).replace(/[/\\]+$/, '')) : null
+const PROJECTS_ROOT = process.env.WFLENS_PROJECTS_ROOT
+  || (PROJECT_DIR ? dirname(PROJECT_DIR) : join(homedir(), '.claude', 'projects'))
 if (SESS) {
   console.log(`[bridge] observing session dir: ${SESS}`)
+  console.log(`[bridge] project dir: ${PROJECT_DIR}`)
 } else {
   console.log('[bridge] WFLENS_SESSION_DIR not set — observed-runs features disabled. Set WFLENS_SESSION_DIR to enable.')
 }
+console.log(`[bridge] projects root (folder browser): ${PROJECTS_ROOT}`)
 
 // In-memory beacon store: stores beacons by both runId and instrumentationId
 // so the observer can correlate without knowing the runId.
@@ -166,11 +177,62 @@ async function handle(req, res) {
       cassetteCount: listCassettes().length,
       bridge: {
         sessionDir: SESS || null,
+        sessionId: SESS ? basename(String(SESS).replace(/[/\\]+$/, '')) : null,
+        projectDir: PROJECT_DIR,
         observeEnabled: Boolean(SESS),
         beaconRunIds: [...beaconByRunId.keys()],
         beaconInstrumentationIds: [...beaconByInstrumentationId.keys()],
       },
     })
+    return
+  }
+
+  // ── GET /v1/projects — every project (folder) Claude has run in ───────────────
+  if (method === 'GET' && urlPath === '/v1/projects') {
+    const projects = listProjects(PROJECTS_ROOT)
+    jsonOk(res, {
+      projectsRoot: PROJECTS_ROOT,
+      activeProjectSlug: PROJECT_DIR ? basename(PROJECT_DIR) : null,
+      projects,
+    })
+    return
+  }
+
+  // ── POST /v1/project/select — switch the active project folder ────────────────
+  if (method === 'POST' && urlPath === '/v1/project/select') {
+    let body
+    try { body = await parseBody(req) } catch (e) { jsonErr(res, 'BAD_REQUEST', 'Invalid JSON: ' + e.message); return }
+    const proj = listProjects(PROJECTS_ROOT).find((p) => p.slug === String(body.slug || ''))
+    if (!proj) { jsonErr(res, 'NOT_FOUND', 'No such project under the projects root', 404); return }
+    PROJECT_DIR = proj.dir
+    // Point the active session at the newest session in the new project (if any).
+    const newest = scanProjectSessions(PROJECT_DIR, { limit: 1 }).sessions[0] || null
+    SESS = newest ? join(PROJECT_DIR, newest.id) : null
+    console.log(`[bridge] switched active project → ${PROJECT_DIR} (session: ${newest ? newest.id : 'none'})`)
+    jsonOk(res, { ok: true, projectDir: PROJECT_DIR, cwd: proj.cwd, activeSessionId: newest ? newest.id : null })
+    return
+  }
+
+  // ── GET /v1/sessions — every session in the project dir (Sessions browser) ────
+  if (method === 'GET' && urlPath === '/v1/sessions') {
+    if (!PROJECT_DIR) { jsonErr(res, 'NOT_CONFIGURED', 'WFLENS_SESSION_DIR is not set — no project dir to browse', 503); return }
+    const limit = Math.min(200, Math.max(1, parseInt(new URL(url, 'http://x').searchParams.get('limit') || '40', 10) || 40))
+    const out = scanProjectSessions(PROJECT_DIR, { limit })
+    out.activeSessionId = SESS ? basename(String(SESS).replace(/[/\\]+$/, '')) : null
+    jsonOk(res, out)
+    return
+  }
+
+  // ── POST /v1/session/select — switch the active session (localhost, single user) ──
+  if (method === 'POST' && urlPath === '/v1/session/select') {
+    if (!PROJECT_DIR) { jsonErr(res, 'NOT_CONFIGURED', 'WFLENS_SESSION_DIR is not set — no project dir to browse', 503); return }
+    let body
+    try { body = await parseBody(req) } catch (e) { jsonErr(res, 'BAD_REQUEST', 'Invalid JSON: ' + e.message); return }
+    const summary = summarizeSessionFile(PROJECT_DIR, body.id) // validates the uuid + existence
+    if (!summary) { jsonErr(res, 'NOT_FOUND', 'No such session in this project', 404); return }
+    SESS = join(PROJECT_DIR, summary.id)
+    console.log(`[bridge] switched active session → ${SESS}`)
+    jsonOk(res, { ok: true, sessionId: summary.id, sessionDir: SESS, session: summary })
     return
   }
 

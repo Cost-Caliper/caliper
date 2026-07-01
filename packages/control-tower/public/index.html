@@ -106,12 +106,29 @@
        Subagents are the two visible views. To restore Control: remove `hidden` from its button. -->
   <div class="tabbar" role="tablist" aria-label="Dashboard mode">
     <button class="tabbar-btn" data-tab="control" role="tab" type="button" aria-selected="false" hidden>Control (shim)</button>
-    <button class="tabbar-btn active" data-tab="session" role="tab" type="button" aria-selected="true">Session</button>
+    <button class="tabbar-btn active" data-tab="sessions" role="tab" type="button" aria-selected="true">Sessions</button>
+    <button class="tabbar-btn" data-tab="session" role="tab" type="button" aria-selected="false">Active Session</button>
     <button class="tabbar-btn" data-tab="observe" role="tab" type="button" aria-selected="false">Workflows</button>
     <button class="tabbar-btn" data-tab="subagents" role="tab" type="button" aria-selected="false">Subagents</button>
   </div>
 
-  <div id="tab-session" class="tab-panel">
+  <div id="tab-sessions" class="tab-panel">
+  <!-- ── Sessions browser: EVERY session in this project — incl. plain conversations ── -->
+    <section class="card observed-panel" aria-labelledby="sessions-heading">
+      <div class="section-header">
+        <h2 class="section-title" id="sessions-heading">
+          Sessions
+          <span class="source-badge badge-observed" title="Every Claude Code session found in this project directory — including plain conversations with no workflows or subagents. Click one to inspect it.">this project</span>
+        </h2>
+        <button class="btn btn-secondary btn-sm" type="button" id="sessions-refresh" aria-label="Refresh sessions">Refresh</button>
+      </div>
+      <div id="sessions-context" class="project-context"></div>
+      <div id="sessions-list" style="margin-top:10px"></div>
+      <p class="observed-caveat label-13 muted" style="margin-top:12px">Sessions are read from this project's <code>~/.claude/projects/…</code> directory. Stats are reconstructed from each transcript (cache-aware cost estimate, not billed). Click a session to make it active — the Active Session, Workflows, and Subagents tabs then show that session.</p>
+    </section>
+  </div><!-- /tab-sessions -->
+
+  <div id="tab-session" class="tab-panel" hidden>
   <!-- ── Session waterfall: the main session and everything it launched, on a time axis ── -->
     <section class="card observed-panel" id="session-panel" aria-labelledby="session-heading">
       <div class="section-header">

@@ -2208,7 +2208,7 @@ function setSubView(v) {
 document.querySelectorAll('.seg-btn[data-subview]').forEach((b) => b.addEventListener('click', () => setSubView(b.dataset.subview)));
 
 // ── Session waterfall: the main session + everything it launched, on one time axis ──
-const SESSION_KIND_COLOR = { workflow: '#6366f1', subagent: '#14b8a6' };
+const SESSION_KIND_COLOR = { main: '#8a8f98', workflow: '#6366f1', subagent: '#14b8a6' };
 let sessionView = 'waterfall';   // 'waterfall' | 'nodes'
 let lastSession = null;          // cached {workflows, sub} so toggling view doesn't re-fetch
 async function loadSessionWaterfall() {
@@ -2258,25 +2258,11 @@ async function renderSessionView() {
   wrap.innerHTML = buildSessionNodesSvg(workflows, sub, lastSession.wfDetails);
   requestAnimationFrame(applySessionNodeZoom); // fit to start
 }
-// Build the merged item list once (used by both the waterfall and the node view).
-function sessionItems(workflows, sub) {
-  const items = [];
-  for (const w of (workflows || [])) {
-    const s = w.startedAt ? Date.parse(w.startedAt) : (w.timestamp && w.durationMs ? Date.parse(w.timestamp) - w.durationMs : 0);
-    if (!s) continue;
-    items.push({ kind: 'workflow', navId: w.runId, label: w.name || w.runId, startMs: s, dur: w.durationMs || 0, cost: w.costUsd || 0, extra: `${w.agentCount || 0} agents` });
-  }
-  walkForest(sub && sub.root, (n) => {
-    if (!n || n.agentId === MAIN_SESSION_ID) return;
-    const s = n.startedAtMs || 0; if (!s) return;
-    items.push({ kind: 'subagent', navId: n.agentId, label: n.description || n.agentId, startMs: s, dur: n.ms || 0, cost: n.costUsd || 0, extra: n.agentType || '' });
-  });
-  items.sort((a, b) => a.startMs - b.startMs || b.dur - a.dur);
-  return items;
-}
+// (The waterfall and node views each build their own item lists — a former shared
+// sessionItems() helper was dead code and was removed to prevent divergence bugs.)
 function sessionLegend() {
   const sw = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:2px;background:${c};display:inline-block"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
-  return `<div style="margin-top:6px">${sw(SESSION_KIND_COLOR.workflow, 'Workflow')}${sw(SESSION_KIND_COLOR.subagent, 'Subagent (direct)')}</div>`;
+  return `<div style="margin-top:6px">${sw(SESSION_KIND_COLOR.main, 'Main conversation')}${sw(SESSION_KIND_COLOR.workflow, 'Workflow')}${sw(SESSION_KIND_COLOR.subagent, 'Subagent')}</div>`;
 }
 
 // Node/call-graph view: the main session pinned LEFT, fanning out to a vertical list of
@@ -2477,8 +2463,13 @@ function renderSessionHeader(workflows, sub) {
   if (roll) {
     const wf = (workflows || []).length;
     const subN = sub?.rollup?.totalSubagents || 0;
-    const totalCost = (workflows || []).reduce((s, w) => s + (w.costUsd || 0), 0) + (sub?.rollup?.totalCostUsd || 0);
-    roll.textContent = `${wf} workflow${wf === 1 ? '' : 's'} · ${subN} direct subagent${subN === 1 ? '' : 's'} · ${fmtUsdShort(totalCost)} total`;
+    const mainCost = sub?.root?.costUsd || 0;
+    const totalCost = (workflows || []).reduce((s, w) => s + (w.costUsd || 0), 0) + (sub?.rollup?.totalCostUsd || 0) + mainCost;
+    const bits = [`${fmtUsdShort(totalCost)} total (est.)`];
+    if (mainCost) bits.push(`main conversation ${fmtUsdShort(mainCost)}`);
+    bits.push(`${wf} workflow${wf === 1 ? '' : 's'}`);
+    bits.push(`${subN} subagent${subN === 1 ? '' : 's'}`);
+    roll.textContent = bits.join(' · ');
   }
   renderSessionInsight(workflows, sub);
 }
@@ -2495,14 +2486,15 @@ function siDur(ms) {
   return `${Math.round(s)}s`;
 }
 const MODEL_ORDER = ['opus', 'sonnet', 'haiku', 'other'];
-function modelTier(m) { m = String(m || '').toLowerCase(); return m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other'; }
+// Mirrors the server's tierFromModel: fable is priced/bucketed as opus tier.
+function modelTier(m) { m = String(m || '').toLowerCase(); return (m.includes('opus') || m.includes('fable')) ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other'; }
 function modelColor(tier) { return tier === 'other' ? '#8a8f98' : tierColor(tier); }
 // Per-item cost split by model: {opus: $, sonnet: $, ...}. Workflows need their fetched
 // telemetry.calls; subagents carry a single model. Returns null if a workflow's detail
 // isn't loaded yet (→ render a plain bar until it arrives).
 function itemModelSplit(item, wfDetails) {
   const m = {};
-  if (item.kind === 'subagent') { if (item.cost) m[modelTier(item.model)] = item.cost; return m; }
+  if (item.kind !== 'workflow') { if (item.cost) m[modelTier(item.model)] = item.cost; return m; } // subagent/main: single model
   const det = wfDetails && wfDetails.get(item.navId);
   const calls = det && det.telemetry && det.telemetry.calls;
   if (!calls) return null; // not loaded yet
@@ -2543,6 +2535,8 @@ function sessionTierUsage(workflows, sub, wfDetails) {
   for (const c of allSubNodes(sub && sub.root)) { // full forest — nested subagents count too
     const tk = c.tokens || {}; add(modelTier(c.model), tk.in, tk.out, tk.cacheWr, tk.cacheRd, c.costUsd, c.inferenceMs);
   }
+  const r = sub && sub.root; // the main conversation's own tokens count too
+  if (r && r.tokens) add(modelTier(r.model), r.tokens.in, r.tokens.out, r.tokens.cacheWr, r.tokens.cacheRd, r.costUsd, r.inferenceMs);
   return t;
 }
 // Real measured generation throughput (tok/s) per tier = output tokens ÷ inference time.
@@ -2580,13 +2574,21 @@ function renderSessionInsight(workflows, sub, wfDetails) {
     const e = c.endedAt ? Date.parse(c.endedAt) : (s + (c.ms || 0));
     items.push({ label: c.description || c.agentId, kind: 'subagent', cost: c.costUsd || 0, meta: c.agentType || 'subagent', navKind: 'sub', navId: c.agentId, model: c.model, startMs: s, endMs: e });
   }
+  // The main conversation is a first-class cost item — a REGULAR session with zero
+  // workflows/subagents still gets a full insight card about the chat itself.
+  const mainRoot = sub && sub.root;
+  if (mainRoot && (mainRoot.costUsd || mainRoot.turns)) {
+    const s = mainRoot.startedAtMs || 0;
+    items.push({ label: 'main conversation (this chat)', kind: 'main', cost: mainRoot.costUsd || 0, meta: `${mainRoot.turns || 0} turns`, navKind: 'sub', navId: MAIN_SESSION_ID, model: mainRoot.model, startMs: s, endMs: s + (mainRoot.ms || 0) });
+  }
   if (!items.length) { host.innerHTML = ''; return; }
   const total = items.reduce((a, b) => a + b.cost, 0);      // real total — displayed as-is (may be $0)
   const pctDenom = total > 0 ? total : 1;                   // division guard for percents only
   const wfCount = items.filter((i) => i.kind === 'workflow').length;
-  const subCount = items.length - wfCount;
+  const subCount = items.filter((i) => i.kind === 'subagent').length;
+  const mainCost = items.filter((i) => i.kind === 'main').reduce((a, b) => a + b.cost, 0);
   const wfCost = items.filter((i) => i.kind === 'workflow').reduce((a, b) => a + b.cost, 0);
-  const subCost = total - wfCost;
+  const subCost = total - wfCost - mainCost;
   const starts = items.map((i) => i.startMs).filter(Boolean);
   const ends = items.map((i) => i.endMs).filter(Boolean);
   const span = (starts.length && ends.length) ? Math.max(...ends) - Math.min(...starts) : 0;
@@ -2620,10 +2622,13 @@ function renderSessionInsight(workflows, sub, wfDetails) {
     : '';
 
   const spanTxt = siDur(span);
-  const headline = `<span style="color:var(--gray-1000)">${wfCount} workflow${wfCount === 1 ? '' : 's'}</span> and `
-    + `<span style="color:var(--gray-1000)">${subCount} subagent${subCount === 1 ? '' : 's'}</span> · `
+  const parts = [];
+  if (mainCost > 0 || items.some((i) => i.kind === 'main')) parts.push('the main conversation');
+  if (wfCount) parts.push(`<span style="color:var(--gray-1000)">${wfCount} workflow${wfCount === 1 ? '' : 's'}</span>`);
+  if (subCount) parts.push(`<span style="color:var(--gray-1000)">${subCount} subagent${subCount === 1 ? '' : 's'}</span>`);
+  const headline = `This session = ${parts.join(' + ') || 'nothing yet'} · `
     + `<span style="color:var(--gray-1000)">${fmtUsdShort(total)} estimated</span>${spanTxt ? ` · spanned ${spanTxt}` : ''}`
-    + (total > 0 ? ` · the top <span style="color:var(--gray-1000)">${paretoN}</span> account for ~60% of the spend` : '');
+    + (total > 0 && items.length > 2 ? ` · the top <span style="color:var(--gray-1000)">${paretoN}</span> account for ~60% of the spend` : '');
 
   // Bar = width by cost share of the biggest item; internally segmented by model.
   const barHtml = (i) => {
@@ -2649,9 +2654,11 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   const chip = (label, val, sub2, cls) => `<div class="si-chip${cls ? ' ' + cls : ''}"><div class="si-chip-k">${label}</div><div class="si-chip-v">${val}</div>${sub2 ? `<div class="si-chip-s">${sub2}</div>` : ''}</div>`;
   const biggest = ranked[0];
   const savings = computeSavings(workflows, sub, wfDetails);
-  let chips = chip('Workflows', fmtUsdShort(wfCost), `${pct(wfCost)}% of spend`)
-    + chip('Subagents', fmtUsdShort(subCost), `${pct(subCost)}% of spend`)
-    + chip('Biggest single', fmtUsdShort(biggest.cost), esc(truncTxt(biggest.label, 22)));
+  let chips = '';
+  if (mainCost > 0) chips += chip('Main conversation', fmtUsdShort(mainCost), `${pct(mainCost)}% of spend`);
+  if (wfCount) chips += chip('Workflows', fmtUsdShort(wfCost), `${pct(wfCost)}% of spend`);
+  if (subCount) chips += chip('Subagents', fmtUsdShort(subCost), `${pct(subCost)}% of spend`);
+  chips += chip('Biggest single', fmtUsdShort(biggest.cost), esc(truncTxt(biggest.label, 22)));
   // Chip subtitle is hedged: savings.pct's denominator is the re-priceable Claude-tier spend
   // (with loaded details), NOT the headline total — don't let it read as session-wide.
   if (savings) chips += chip('Potential savings', fmtUsdShort(savings.save), `${savings.pct}% of Claude-tier spend${failedDetails ? ' · partial' : ''}`, savings.save > 0 ? 'si-chip-save' : 'si-chip-warn');
@@ -2727,10 +2734,14 @@ function buildSessionWaterfallSvg(workflows, sub) {
     const s = n.startedAtMs || 0; if (!s) return;
     items.push({ kind: 'subagent', navId: n.agentId, label: n.description || n.agentId, startMs: s, dur: n.ms || 0, cost: n.costUsd || 0, extra: n.agentType || '' });
   });
-  if (!items.length) return ctEmptyHtml('Nothing launched in this session yet', 'When the session runs a Workflow or spawns a subagent, it appears here on a shared time axis.', '');
+  // A REGULAR session (nothing launched) still shows the conversation's own bar.
+  const mainRoot = sub && sub.root;
+  if (!items.length && !(mainRoot && mainRoot.startedAtMs)) {
+    return ctEmptyHtml('Nothing in this session yet', 'When the session talks, runs a Workflow, or spawns a subagent, it appears here on a time axis.', '');
+  }
   items.sort((a, b) => a.startMs - b.startMs || b.dur - a.dur);
-  const minStart = Math.min(...items.map((i) => i.startMs));
-  const maxEnd = Math.max(...items.map((i) => i.startMs + i.dur));
+  const minStart = items.length ? Math.min(...items.map((i) => i.startMs)) : mainRoot.startedAtMs;
+  const maxEnd = items.length ? Math.max(...items.map((i) => i.startMs + i.dur)) : (mainRoot.startedAtMs + Math.max(1, mainRoot.ms || 0));
   const span = Math.max(1, maxEnd - minStart);
   const W = 960, rowH = 22, padL = 210, padR = 86, innerW = W - padL - padR, barH = 12;
   const xOf = (absMs) => padL + ((Math.max(minStart, absMs) - minStart) / span) * innerW;
@@ -2738,10 +2749,12 @@ function buildSessionWaterfallSvg(workflows, sub) {
   let y = 8;
   const parts = [];
   // Row 0: the session itself, spanning the whole window (it launched everything).
+  // Clickable → opens the main conversation's own timeline (inference/tool per turn).
+  const mainCostTxt = mainRoot && mainRoot.costUsd ? ` · ${fmtUsdShort(mainRoot.costUsd)}` : '';
   parts.push(
     `<circle cx="12" cy="${y + barH / 2}" r="4" fill="var(--gray-700)"></circle>`
-    + `<text x="${padL - 8}" y="${y + 10}" text-anchor="end" style="font-size:11px;font-weight:600;fill:var(--gray-1000)">main session</text>`
-    + `<rect x="${xOf(minStart)}" y="${y}" width="${innerW.toFixed(1)}" height="${barH}" rx="2" fill="#8a8f98" opacity="0.22"><title>main session — the conversation that launched everything (${fmtMs(span)})</title></rect>`
+    + `<text data-nav-kind="sub" data-nav-id="${esc(MAIN_SESSION_ID)}" x="${padL - 8}" y="${y + 10}" text-anchor="end" style="cursor:pointer;font-size:11px;font-weight:600;fill:var(--gray-1000)">main conversation</text>`
+    + `<rect data-nav-kind="sub" data-nav-id="${esc(MAIN_SESSION_ID)}" x="${xOf(minStart)}" y="${y}" width="${innerW.toFixed(1)}" height="${barH}" rx="2" fill="#8a8f98" opacity="0.28" style="cursor:pointer"><title>main conversation — the chat itself (${fmtMs(span)}${mainCostTxt}). Click to inspect its timeline.</title></rect>`
     + `<text x="${(padL + innerW + 6).toFixed(1)}" y="${y + 10}" style="font-size:9.5px;fill:var(--gray-700)">${fmtMs(span)}</text>`,
   );
   y += rowH + 4;
@@ -2759,11 +2772,13 @@ function buildSessionWaterfallSvg(workflows, sub) {
     y += rowH;
   }
   const H = y + 8;
-  const sw = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:2px;background:${c};display:inline-block"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
-  const legend = `<div style="margin-top:6px">${sw(SESSION_KIND_COLOR.workflow, 'Workflow')}${sw(SESSION_KIND_COLOR.subagent, 'Subagent (direct)')}</div>`;
+  const plainNote = !items.length
+    ? '<div class="muted" style="font-size:11px;margin-top:6px">This session launched no workflows or subagents — the bar is the conversation itself. Click it to inspect the chat timeline.</div>'
+    : '';
   const svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto">${parts.join('')}</svg>`;
   return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px">${svg}</div>`
-    + legend
+    + plainNote
+    + sessionLegend()
     + '<div class="muted" style="font-size:11px;margin-top:6px">Everything the session launched, sorted by start time. Click a label or bar to open it in its tab.</div>';
 }
 
@@ -2880,8 +2895,123 @@ document.getElementById('session-waterfall-wrap')?.addEventListener('mouseleave'
 });
 window.addEventListener('resize', () => { if (sessionView === 'nodes' && sessionNodeZoom === 'fit') applySessionNodeZoom(); });
 
+// ── Sessions browser (home tab): project folder picker + date-grouped session list ──
+// The cognitive model per user feedback: pick the FOLDER you work in → see its sessions
+// organized by day → click one to inspect it. Empty sessions are folded away (noise).
+let sessionsData = null;   // last /v1/sessions payload
+let projectsData = null;   // last /v1/projects payload
+let showEmptySessions = false;
+
+async function loadSessionsBrowser() {
+  const list = document.getElementById('sessions-list'); if (!list) return;
+  if (!projectsData) await loadProjectsPicker();
+  await loadSessionsList();
+}
+async function loadProjectsPicker() {
+  try { projectsData = await apiFetch('/v1/projects'); } catch { projectsData = null; return; }
+  const host = document.getElementById('sessions-context'); if (!host) return;
+  const active = projectsData.activeProjectSlug;
+  const opts = projectsData.projects.map((p) => {
+    const label = `${homeAbbrev(p.cwd || p.slug)}  ·  ${p.sessionCount} session${p.sessionCount === 1 ? '' : 's'}`;
+    return `<option value="${esc(p.slug)}"${p.slug === active ? ' selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+  host.innerHTML = `<div class="sess-projectbar">`
+    + `<label class="sess-projectlabel" for="project-picker">Project folder</label>`
+    + `<select id="project-picker" class="input sess-project-select" title="Every folder you've run Claude Code in. Pick one to browse its sessions.">${opts}</select>`
+    + `<span class="muted" style="font-size:11px">${projectsData.projects.length} folders known to Claude Code</span></div>`;
+  document.getElementById('project-picker')?.addEventListener('change', async (e) => {
+    const slug = e.target.value;
+    try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); }
+    catch (err) { alert('Could not switch project: ' + err.message); return; }
+    resetSessionCaches();
+    projectsData.activeProjectSlug = slug;
+    await loadSessionsList();
+  });
+}
+async function loadSessionsList() {
+  const list = document.getElementById('sessions-list'); if (!list) return;
+  list.innerHTML = '<p class="muted" style="padding:12px;font-size:12px">Reading sessions…</p>';
+  try { sessionsData = await apiFetch('/v1/sessions?limit=200'); }
+  catch (err) { list.innerHTML = `<p class="muted" style="padding:12px">Could not load sessions: ${esc(err.message)}</p>`; return; }
+  renderSessionsList();
+}
+function sessDayLabel(ms) {
+  const d = new Date(ms); const today = new Date(); const yd = new Date(today.getTime() - 86400000);
+  const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (same(d, today)) return 'Today';
+  if (same(d, yd)) return 'Yesterday';
+  const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== today.getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
+}
+function sessClock(ms) { return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }); }
+function renderSessionsList() {
+  const list = document.getElementById('sessions-list'); if (!list || !sessionsData) return;
+  const all = sessionsData.sessions || [];
+  const activeId = sessionsData.activeSessionId;
+  if (!all.length) { list.innerHTML = ctEmptyHtml('No sessions in this folder yet', 'Run Claude Code in this project and its sessions will appear here.', ''); return; }
+  const isEmpty = (s) => !s.turns && !s.costUsd;
+  const shown = showEmptySessions ? all : all.filter((s) => !isEmpty(s));
+  const hiddenCount = all.length - shown.length;
+  // Group by calendar day of activity (start time, falling back to file mtime).
+  const groups = new Map(); // label -> {ms, items:[]}
+  for (const s of shown) {
+    const ms = (s.startedAt ? Date.parse(s.startedAt) : 0) || s.mtimeMs || 0;
+    const label = sessDayLabel(ms);
+    if (!groups.has(label)) groups.set(label, { ms, items: [] });
+    const g = groups.get(label); g.items.push({ ...s, _ms: ms }); g.ms = Math.max(g.ms, ms);
+  }
+  const ordered = [...groups.entries()].sort((a, b) => b[1].ms - a[1].ms);
+  let html = '';
+  for (const [label, g] of ordered) {
+    g.items.sort((a, b) => b._ms - a._ms);
+    const dayCost = g.items.reduce((a, b) => a + (b.costUsd || 0), 0);
+    html += `<div class="sess-group"><div class="sess-group-h"><span>${esc(label)}</span>`
+      + `<span class="sess-group-meta">${g.items.length} session${g.items.length === 1 ? '' : 's'} · ${fmtUsdShort(dayCost)}</span></div>`;
+    for (const s of g.items) {
+      const badges = []
+      if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+      if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+      const activePill = s.id === activeId ? '<span class="sess-active-pill">active</span>' : '';
+      const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
+      html += `<button class="sess-row${ghost}" type="button" data-session-id="${esc(s.id)}" title="${esc(s.id)}${s.cwd ? ' · ' + esc(s.cwd) : ''}">`
+        + `<span class="sess-time mono">${s._ms ? sessClock(s._ms) : '—'}</span>`
+        + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 96))}${activePill}</span>`
+        + `<span class="sess-badges">${badges.join('')}</span>`
+        + `<span class="sess-dur mono muted">${s.ms ? fmtMs(s.ms) : '—'}</span>`
+        + `<span class="sess-turns mono muted" title="assistant turns">${fmtN(s.turns)}t</span>`
+        + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)}">${fmtUsdShort(s.costUsd)}</span>`
+        + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
+    }
+    html += '</div>';
+  }
+  if (hiddenCount > 0 || showEmptySessions) {
+    html += `<button class="sess-empty-toggle" type="button" id="sess-empty-toggle">${showEmptySessions ? 'Hide' : `Show`} ${hiddenCount || ''} empty session${hiddenCount === 1 ? '' : 's'}${showEmptySessions ? '' : ' (no turns, no cost)'}</button>`;
+  }
+  if (sessionsData.totalSessions > all.length) html += `<div class="muted" style="font-size:11px;padding:6px 4px">Showing the ${all.length} most recent of ${sessionsData.totalSessions} sessions.</div>`;
+  list.innerHTML = html;
+}
+function resetSessionCaches() {
+  lastSession = null; sessionsData = null; sessionCollapsed = new Set(); sessionKnownFoldIds = new Set(); sessionNestedIndex = null; sessionTree = null;
+  try { runCache.clear(); } catch { /* not defined yet */ }
+  try { subCache.clear(); } catch { /* not defined yet */ }
+}
+async function selectSession(id) {
+  try { await apiFetch('/v1/session/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); }
+  catch (err) { alert('Could not select session: ' + err.message); return; }
+  resetSessionCaches();
+  setTab('session'); // Active Session tab reloads everything from the newly-selected session
+}
+document.getElementById('sessions-list')?.addEventListener('click', (e) => {
+  const tgl = e.target.closest('#sess-empty-toggle');
+  if (tgl) { showEmptySessions = !showEmptySessions; renderSessionsList(); return; }
+  const row = e.target.closest('[data-session-id]');
+  if (row) selectSession(row.getAttribute('data-session-id'));
+});
+document.getElementById('sessions-refresh')?.addEventListener('click', async () => { projectsData = null; await loadSessionsBrowser(); });
+
 function setTab(tab) {
-  const panels = { control: 'tab-control', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
+  const panels = { control: 'tab-control', sessions: 'tab-sessions', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
   for (const [t, id] of Object.entries(panels)) { const el = document.getElementById(id); if (el) el.hidden = (t !== tab); }
   // The run-controls chrome belongs to the Control tab only.
   const isControl = tab === 'control';
@@ -2894,6 +3024,7 @@ function setTab(tab) {
     b.setAttribute('aria-selected', sel ? 'true' : 'false');
     b.classList.toggle('active', sel);
   });
+  if (tab === 'sessions') loadSessionsBrowser();
   if (tab === 'session') loadSessionWaterfall();
   if (tab === 'observe') loadObservedList();
   if (tab === 'subagents') loadSubagentTree();
@@ -2901,9 +3032,9 @@ function setTab(tab) {
 document.querySelectorAll('.tabbar-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
 init();
-setTab('session');
+setTab('sessions');
 
 // Debug/QA handle (module scope hides everything otherwise). Read-only-ish: used by
 // browser-based smoke tests to exercise edge cases (zero-cost, partial details) against
 // the real render path. Not a public API.
-window.__wflens = { renderSessionInsight, loadWfDetails, getSession: () => lastSession };
+window.__wflens = { renderSessionInsight, loadWfDetails, getSession: () => lastSession, selectSession, getSessions: () => sessionsData };

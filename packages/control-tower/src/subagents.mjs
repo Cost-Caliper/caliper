@@ -174,12 +174,18 @@ export function scanSubagentTree(sessDir) {
   // trailing slash on WFLENS_SESSION_DIR would yield "<sessDir>/.jsonl". Normalize it away.
   const base = String(sessDir || '').replace(/[/\\]+$/, '')
   const empty = { sessionId: base ? basename(base) : null, root: null, rollup: null, cwd: null, gitBranch: null }
-  if (!base || !existsSync(base)) return empty
+  // A REGULAR session may have no session dir at all — just the sibling <base>.jsonl.
+  // It still gets a MAIN-only forest (main stats, zero subagents) so the app can show it.
+  const hasMainTranscript = base && existsSync(base + '.jsonl')
+  if (!base || (!existsSync(base) && !hasMainTranscript)) return empty
   const subDir = join(base, 'subagents')
-  if (!existsSync(subDir)) return empty
 
-  let metaFiles
-  try { metaFiles = readdirSync(subDir).filter((f) => META_RE.test(f)) } catch { return empty }
+  let metaFiles = []
+  if (existsSync(subDir)) {
+    try { metaFiles = readdirSync(subDir).filter((f) => META_RE.test(f)) } catch { metaFiles = [] }
+  } else if (!hasMainTranscript) {
+    return empty
+  }
 
   // Owner map: a tool_use id → owner agentId (MAIN_SESSION or a subagent id), with the
   // spawning Agent call's description/model for label fallback.

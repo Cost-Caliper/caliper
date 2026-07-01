@@ -241,11 +241,13 @@ export function buildSegments(events) {
 // opts.light=true → skip the heavy per-segment detail (event payloads, buildSegments,
 // task/output). Used by the Subagents tree scan, which needs only totals + agentCalls
 // + timestamps for MANY transcripts; full detail is fetched lazily per agent.
+// opts.titleChars>0 → in light mode, still return `task` truncated to that many chars
+// (the Sessions browser uses the first user message as the session title).
 //
 // Always returns `agentCalls` — [{id, description, model}] for every `Agent` tool_use
 // this transcript emitted — so the Subagents view can resolve parent→child by matching
 // a child's meta.toolUseId to the owner transcript. (reconstructRun ignores this field.)
-export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
+export function parseAgentTranscript(transcriptPath, { light = false, titleChars = 0 } = {}) {
   if (!existsSync(transcriptPath)) return null
   let lines
   try { lines = readFileSync(transcriptPath, 'utf8').split('\n').filter(Boolean) } catch { return null }
@@ -256,6 +258,7 @@ export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
   let cwd = null        // working directory the agent ran in (carried on every entry)
   let gitBranch = null  // git branch at run time (carried on every entry)
   let task = null       // first user message = the prompt/task this agent received
+  let taskTitle = null  // first HUMAN-looking user message (skips leading harness tag blocks)
   let output = null     // latest assistant text = its answer
   let assistantTurns = 0
   let toolCalls = 0
@@ -310,6 +313,9 @@ export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
         }
       }
       if (task === null) { const t = textOf(msg.content).trim(); if (t) task = t }
+      // Title candidate: the first user message that reads like a HUMAN prompt (main-session
+      // transcripts often open with harness tag blocks like <local-command-caveat>…).
+      if (taskTitle === null) { const t = textOf(msg.content).trim(); if (t && !t.startsWith('<')) taskTitle = t }
       continue
     }
     if (entry.type !== 'assistant') continue
@@ -350,7 +356,7 @@ export function parseAgentTranscript(transcriptPath, { light = false } = {}) {
     // intentionally omitted), so a transcript with no assistant turns reports ms=0.
     return {
       model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
-      task: null, output: null,
+      task: titleChars > 0 ? trunc(taskTitle || task, titleChars) : null, output: null,
       assistantTurns, toolCalls, tools: [...tools], agentCalls,
       segments: [], inferenceMs: 0, toolMs: 0,
     }

@@ -1473,3 +1473,43 @@ select.input {
 
 .si-method-formula { margin: 0 0 8px; }
 .si-method-formula code { font-family: var(--font-mono); font-size: 11px; color: var(--gray-1000); background: var(--gray-100); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; display: inline-block; }
+
+/* ── Sessions browser (home tab): project picker + date-grouped session list ── */
+.sess-projectbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.sess-projectlabel { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--gray-700); }
+.sess-project-select { height: 34px; line-height: 34px; font-size: 13px; max-width: 520px; font-family: var(--font-mono); }
+.sess-group { margin-bottom: 14px; }
+.sess-group-h {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 6px 4px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--gray-1000);
+  position: sticky; top: 56px; background: var(--bg-100); z-index: 2;
+}
+.sess-group-meta { font-size: 11px; font-weight: 400; color: var(--gray-700); font-family: var(--font-mono); }
+.sess-row {
+  display: grid;
+  grid-template-columns: 44px minmax(200px, 1fr) auto 70px 52px 64px 14px;
+  align-items: center; gap: 10px;
+  width: 100%; padding: 6px 4px;
+  background: none; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  border-radius: 0; cursor: pointer; text-align: left; color: inherit;
+}
+.sess-row:hover { background: var(--gray-200); border-radius: 4px; }
+.sess-time { font-size: 11.5px; color: var(--gray-700); }
+.sess-title { font-size: 12.5px; color: var(--gray-1000); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sess-badges { display: inline-flex; gap: 4px; }
+.sess-badge { font-size: 10px; font-family: var(--font-mono); border: 1px solid; border-radius: 999px; padding: 1px 7px; opacity: .9; }
+.sess-dur, .sess-turns { font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; }
+.sess-cost { font-size: 12px; text-align: right; color: var(--gray-1000); font-variant-numeric: tabular-nums; }
+.sess-active-pill {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  color: var(--blue); border: 1px solid color-mix(in srgb, var(--blue) 55%, transparent);
+  border-radius: 999px; padding: 1px 7px; margin-left: 8px; vertical-align: 1px;
+}
+.sess-row-ghost { opacity: .45; }
+.sess-empty-toggle {
+  background: none; border: 0; color: var(--gray-700); font-size: 11.5px; cursor: pointer;
+  padding: 8px 4px; text-align: left;
+}
+.sess-empty-toggle:hover { color: var(--gray-1000); }
