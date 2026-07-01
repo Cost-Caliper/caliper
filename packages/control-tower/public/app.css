@@ -1464,3 +1464,9 @@ select.input {
 .si-method-list li { font-family: var(--font-mono); font-size: 11.5px; color: var(--gray-900); margin: 2px 0; }
 .si-method-list li strong { color: var(--gray-1000); font-family: var(--font-sans); }
 .si-method-warn { border-left: 2px solid var(--amber); padding-left: 10px; color: var(--gray-900); }
+
+/* Measured generation speed (real, this session) */
+.si-speed { font-size: 11.5px; color: var(--gray-700); margin: 2px 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: help; }
+.si-speed .si-lg { gap: 5px; }
+.si-speed strong { color: var(--gray-1000); font-family: var(--font-mono); }
+.si-speed-note { color: var(--gray-500); }

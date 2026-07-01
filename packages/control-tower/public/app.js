@@ -2511,20 +2511,27 @@ const SUBSTITUTE_ASOF = '2026-07-01';
 // subagents — needed to re-price under a substitute model. Skips workflows without loaded detail.
 function sessionTierUsage(workflows, sub, wfDetails) {
   const t = {};
-  const add = (tier, inp, out, cw, cr, cost) => {
-    const x = t[tier] || (t[tier] = { input: 0, output: 0, cacheWr: 0, cacheRd: 0, cost: 0 });
+  // outTimed/infMs only accumulate when inference time is known → real generation tok/s.
+  const add = (tier, inp, out, cw, cr, cost, infMs) => {
+    const x = t[tier] || (t[tier] = { input: 0, output: 0, cacheWr: 0, cacheRd: 0, cost: 0, outTimed: 0, infMs: 0 });
     x.input += inp || 0; x.output += out || 0; x.cacheWr += cw || 0; x.cacheRd += cr || 0; x.cost += cost || 0;
+    if (infMs && infMs > 0) { x.outTimed += out || 0; x.infMs += infMs; }
   };
   for (const w of (workflows || [])) {
     const det = wfDetails && wfDetails.get(w.runId);
     const calls = det && det.telemetry && det.telemetry.calls;
     if (!calls) continue;
-    for (const c of calls) add(modelTier(c.model || c.tier), c.inTok, c.outTok, c.cacheCreationTok, c.cacheReadTok, c.costUsd);
+    for (const c of calls) add(modelTier(c.model || c.tier), c.inTok, c.outTok, c.cacheCreationTok, c.cacheReadTok, c.costUsd, c.inferenceMs);
   }
   for (const c of ((sub && sub.root && sub.root.children) || [])) {
-    const tk = c.tokens || {}; add(modelTier(c.model), tk.in, tk.out, tk.cacheWr, tk.cacheRd, c.costUsd);
+    const tk = c.tokens || {}; add(modelTier(c.model), tk.in, tk.out, tk.cacheWr, tk.cacheRd, c.costUsd, c.inferenceMs);
   }
   return t;
+}
+// Real measured generation throughput (tok/s) per tier = output tokens ÷ inference time.
+function tierGenSpeed(usage, tier) {
+  const u = usage[tier];
+  return u && u.infMs > 0 ? u.outTimed / (u.infMs / 1000) : null;
 }
 // Hypothetical re-pricing of the session at OSS prices, CACHE-AWARE (mirrors how the current
 // cost is computed): fresh input + cache-write at prompt rate, cache-read at the substitute's
@@ -2579,6 +2586,14 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   const legend = modelsPresent.length
     ? `<span class="si-legend">by model: ${modelsPresent.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} ${fmtUsdShort(modelTotals[t])} (${Math.round(modelTotals[t] / modelKnown * 100)}%)</span>`).join('')}</span>`
     : (wfCount ? '<span class="si-legend muted">computing model split…</span>' : '');
+
+  // Measured generation speed per tier (real: output tokens ÷ inference time this session).
+  const usage = sessionTierUsage(workflows, sub, wfDetails);
+  const speedTiers = MODEL_ORDER.filter((t) => tierGenSpeed(usage, t) != null);
+  const speedLine = speedTiers.length
+    ? `<div class="si-speed" title="Output tokens ÷ model inference time, measured across this session's calls. Generation throughput only — not end-to-end run time (excludes tool execution and prompt processing).">`
+      + `measured generation speed: ${speedTiers.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} <strong>${Math.round(tierGenSpeed(usage, t))}</strong></span>`).join(' · ')} tok/s <span class="si-speed-note">· output ÷ inference time, not end-to-end</span></div>`
+    : '';
 
   const spanTxt = siDur(span);
   const headline = `<span style="color:var(--gray-1000)">${wfCount} workflow${wfCount === 1 ? '' : 's'}</span> and `
@@ -2653,7 +2668,7 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   host.innerHTML = `<div class="session-insight-card">`
     + `<div class="si-headline">${headline}</div>`
     + `<div class="si-chips">${chips}</div>`
-    + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${rows}${more}</div>`
+    + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${speedLine}${rows}${more}</div>`
     + savePanel
     + `<div class="si-foot muted">$ = cache-aware <em>estimate</em>, not billed · bars split by model · shares are of the items shown here · click a bar to open it</div>`
     + method
