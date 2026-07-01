@@ -2498,11 +2498,13 @@ function itemModelSplit(item, wfDetails) {
   return m;
 }
 // Open-source substitutes per Anthropic tier — OpenRouter list price ($ per MILLION tokens),
-// captured live 2026-07-01. Used only for the hypothetical "potential savings" estimate.
+// captured live 2026-07-01. Includes cached-input (cacheRd) price so the comparison is
+// apples-to-apples with our cache-aware current cost. cacheWr isn't separately listed for
+// these models, so it's billed at the prompt rate (small vs cacheRd, and conservative).
 const SUBSTITUTE = {
-  opus: { name: 'GLM-5.2', or: 'z-ai/glm-5.2', prompt: 0.93, completion: 3.00 },
-  sonnet: { name: 'DeepSeek V4 Flash', or: 'deepseek/deepseek-v4-flash', prompt: 0.098, completion: 0.196 },
-  haiku: { name: 'GLM-4.7 Flash', or: 'z-ai/glm-4.7-flash', prompt: 0.06, completion: 0.40 },
+  opus: { name: 'GLM-5.2', or: 'z-ai/glm-5.2', prompt: 0.93, completion: 3.00, cacheRd: 0.18 },
+  sonnet: { name: 'DeepSeek V4 Flash', or: 'deepseek/deepseek-v4-flash', prompt: 0.098, completion: 0.196, cacheRd: 0.02 },
+  haiku: { name: 'GLM-4.7 Flash', or: 'z-ai/glm-4.7-flash', prompt: 0.06, completion: 0.40, cacheRd: 0.01 },
 };
 const SUBSTITUTE_ASOF = '2026-07-01';
 // Aggregate real token usage per tier (input/output/cache) across workflow calls + direct
@@ -2524,16 +2526,17 @@ function sessionTierUsage(workflows, sub, wfDetails) {
   }
   return t;
 }
-// Hypothetical re-pricing of the session at OSS list prices. Conservative: cache tokens are
-// billed at the substitute's flat prompt price (no cache discount assumed).
+// Hypothetical re-pricing of the session at OSS prices, CACHE-AWARE (mirrors how the current
+// cost is computed): fresh input + cache-write at prompt rate, cache-read at the substitute's
+// cached-input rate, output at completion rate. Apples-to-apples with the current cost.
 function computeSavings(workflows, sub, wfDetails) {
   const usage = sessionTierUsage(workflows, sub, wfDetails);
   const lines = []; let cur = 0, alt = 0;
   for (const tier of ['opus', 'sonnet', 'haiku']) {
     const u = usage[tier], s = SUBSTITUTE[tier];
     if (!u || !s || !u.cost) continue;
-    const promptTok = u.input + u.cacheWr + u.cacheRd;
-    const subCost = (promptTok * s.prompt + u.output * s.completion) / 1e6;
+    const cacheRdRate = s.cacheRd != null ? s.cacheRd : s.prompt;
+    const subCost = ((u.input + u.cacheWr) * s.prompt + u.cacheRd * cacheRdRate + u.output * s.completion) / 1e6;
     cur += u.cost; alt += subCost;
     lines.push({ tier, sub: s, cur: u.cost, subCost, save: u.cost - subCost });
   }
@@ -2623,7 +2626,7 @@ function renderSessionInsight(workflows, sub, wfDetails) {
       + `<div class="si-lb-title">Potential savings — swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF} · hypothetical</span></div>`
       + savings.lines.map(srow).join('')
       + `<div class="si-stotal">≈ <strong>${fmtUsdShort(savings.alt)}</strong> instead of <strong>${fmtUsdShort(savings.cur)}</strong> on these tiers — save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%)</div>`
-      + `<div class="si-foot muted">Illustrative only: assumes the <em>same token counts</em> at OpenRouter list prices, with <em>no cache discount</em> on the substitute (real savings likely higher — OSS providers cache too). Ignores any quality/capability difference between models.</div></div>`;
+      + `<div class="si-foot muted">Illustrative only: re-prices the <em>same token counts</em> at OpenRouter list prices, cache-aware (cache reads at each model's cached-input rate). Ignores any quality/capability difference between models — an OSS model may need more attempts.</div></div>`;
   }
 
   host.innerHTML = `<div class="session-insight-card">`
