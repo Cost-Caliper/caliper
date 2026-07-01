@@ -2136,7 +2136,28 @@ function renderSubagentDetail(detail) {
     + `<div style="background:var(--bg-100);border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto">${buildTimelineSvg([detail])}</div>`
     + timelineLegend([detail]);
   slot.insertBefore(tl, slot.children[1] || null); // after the header row
+  // Breadcrumb: always know where you are and how to get back to the thread.
+  const isMain = detail.agentId === MAIN_SESSION_ID || detail.isMain;
+  const crumb = document.createElement('div');
+  crumb.className = 'sub-crumb';
+  crumb.innerHTML = `<button class="sub-crumb-btn" type="button" data-crumb-back>← all subagents</button>`
+    + `<span class="sub-crumb-sep">/</span>`
+    + (isMain
+      ? '<span class="sub-crumb-here">main conversation (the thread itself)</span>'
+      : `<button class="sub-crumb-btn" type="button" data-crumb-main title="Open the main conversation this subagent was spawned from">↑ main conversation</button>`
+        + `<span class="sub-crumb-sep">/</span><span class="sub-crumb-here">this subagent</span>`);
+  slot.insertBefore(crumb, slot.firstChild);
+  // Clicking a row shouldn't appear to do nothing — bring the detail into view.
+  requestAnimationFrame(() => slot.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 }
+document.getElementById('tab-subagents')?.addEventListener('click', (e) => {
+  if (e.target.closest('[data-crumb-back]')) {
+    const slot = subEls.slot(); if (slot) slot.hidden = true;
+    subEls.wrap()?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    return;
+  }
+  if (e.target.closest('[data-crumb-main]')) selectSubagent(MAIN_SESSION_ID);
+});
 
 async function selectSubagent(agentId) {
   let detail = subCache.get(agentId);
@@ -2980,7 +3001,7 @@ function renderSessionsList() {
         + `<span class="sess-badges">${badges.join('')}</span>`
         + `<span class="sess-dur mono muted">${s.ms ? fmtMs(s.ms) : '—'}</span>`
         + `<span class="sess-turns mono muted" title="assistant turns">${fmtN(s.turns)}t</span>`
-        + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)}">${fmtUsdShort(s.costUsd)}</span>`
+        + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — the conversation's own cost (workflow/subagent spend not included; open the session for the full total)">${fmtUsdShort(s.costUsd)}</span>`
         + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
     }
     html += '</div>';
@@ -3010,6 +3031,36 @@ document.getElementById('sessions-list')?.addEventListener('click', (e) => {
 });
 document.getElementById('sessions-refresh')?.addEventListener('click', async () => { projectsData = null; await loadSessionsBrowser(); });
 
+// ── Active-session identity strip ────────────────────────────────────────────
+// Always tells you WHICH session the drill-in tabs (Active Session / Workflows /
+// Subagents) are showing: its starting prompt, when it ran, what it cost — plus a
+// one-click way back to the Sessions list. Fetched from the server (authoritative,
+// so it stays right even if the selection changed from another window).
+async function refreshSessionStrip() {
+  const strip = document.getElementById('active-session-strip'); if (!strip || strip.hidden) return;
+  let data = null;
+  try { data = await apiFetch('/v1/session/active'); } catch { /* server unreachable — leave as-is */ }
+  const s = data && data.session;
+  if (!s) {
+    strip.innerHTML = `<span class="sess-strip-label">No session selected</span>`
+      + `<span class="sess-strip-title muted">pick one from the Sessions tab</span>`
+      + `<button class="sess-strip-switch" type="button" data-goto-sessions>Sessions ↗</button>`;
+    return;
+  }
+  const startMs = s.startedAt ? Date.parse(s.startedAt) : s.mtimeMs;
+  const badges = []
+  if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+  if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  strip.innerHTML = `<span class="sess-strip-label">Viewing session</span>`
+    + `<span class="sess-strip-title" title="${esc(s.title || s.id)}">“${esc(truncTxt(s.title || '(no prompt captured)', 90))}”</span>`
+    + `<span class="sess-strip-meta mono" title="conversation cost — workflows/subagents add more (see Active Session for the full total)">${startMs ? sessDayLabel(startMs) + ' ' + sessClock(startMs) : ''} · ${fmtUsdShort(s.costUsd)}</span>`
+    + badges.join('')
+    + `<button class="sess-strip-switch" type="button" data-goto-sessions title="Back to the session list">switch session ↗</button>`;
+}
+document.getElementById('active-session-strip')?.addEventListener('click', (e) => {
+  if (e.target.closest('[data-goto-sessions]')) setTab('sessions');
+});
+
 function setTab(tab) {
   const panels = { control: 'tab-control', sessions: 'tab-sessions', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
   for (const [t, id] of Object.entries(panels)) { const el = document.getElementById(id); if (el) el.hidden = (t !== tab); }
@@ -3024,6 +3075,9 @@ function setTab(tab) {
     b.setAttribute('aria-selected', sel ? 'true' : 'false');
     b.classList.toggle('active', sel);
   });
+  // Identity strip: visible on every drill-in tab, hidden on the Sessions list itself.
+  const strip = document.getElementById('active-session-strip');
+  if (strip) { strip.hidden = !['session', 'observe', 'subagents'].includes(tab); if (!strip.hidden) refreshSessionStrip(); }
   if (tab === 'sessions') loadSessionsBrowser();
   if (tab === 'session') loadSessionWaterfall();
   if (tab === 'observe') loadObservedList();

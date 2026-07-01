@@ -1513,3 +1513,27 @@ select.input {
   padding: 8px 4px; text-align: left;
 }
 .sess-empty-toggle:hover { color: var(--gray-1000); }
+
+/* ── Active-session identity strip (under the tabbar on drill-in tabs) ── */
+.session-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: -6px 0 14px; padding: 7px 12px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--gray-100);
+}
+.session-strip[hidden] { display: none; }
+.sess-strip-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--gray-700); white-space: nowrap; }
+.sess-strip-title { font-size: 12.5px; color: var(--gray-1000); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 52ch; }
+.sess-strip-meta { font-size: 11px; color: var(--gray-700); white-space: nowrap; }
+.sess-strip-switch {
+  margin-left: auto; background: none; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--gray-900); font-size: 11px; padding: 3px 10px; cursor: pointer; white-space: nowrap;
+}
+.sess-strip-switch:hover { color: var(--gray-1000); border-color: var(--border-hover); }
+
+/* Subagent-detail breadcrumb */
+.sub-crumb { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sub-crumb-btn { background: none; border: 0; color: var(--blue); font-size: 12px; cursor: pointer; padding: 2px 0; }
+.sub-crumb-btn:hover { text-decoration: underline; }
+.sub-crumb-sep { color: var(--gray-500); font-size: 11px; }
+.sub-crumb-here { color: var(--gray-700); font-size: 12px; }

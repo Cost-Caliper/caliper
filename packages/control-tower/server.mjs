@@ -223,6 +223,14 @@ async function handle(req, res) {
     return
   }
 
+  // ── GET /v1/session/active — identity of the currently-viewed session (for the strip) ──
+  if (method === 'GET' && urlPath === '/v1/session/active') {
+    const id = SESS ? basename(String(SESS).replace(/[/\\]+$/, '')) : null
+    const session = id && PROJECT_DIR ? summarizeSessionFile(PROJECT_DIR, id) : null
+    jsonOk(res, { sessionId: id, projectDir: PROJECT_DIR, session })
+    return
+  }
+
   // ── POST /v1/session/select — switch the active session (localhost, single user) ──
   if (method === 'POST' && urlPath === '/v1/session/select') {
     if (!PROJECT_DIR) { jsonErr(res, 'NOT_CONFIGURED', 'WFLENS_SESSION_DIR is not set — no project dir to browse', 503); return }
