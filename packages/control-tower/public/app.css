@@ -1430,10 +1430,11 @@ select.input {
 .si-save { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .si-srow {
   display: grid;
-  grid-template-columns: 10px minmax(130px, 1.1fr) 50px 14px 50px 68px 82px;
-  align-items: center; gap: 8px; padding: 3px 4px; font-size: 12px;
+  grid-template-columns: 10px minmax(140px, 1fr) 64px 12px 64px 84px 96px;
+  align-items: baseline; gap: 10px; padding: 4px 4px; font-size: 12px;
 }
 .si-slabel { color: var(--gray-1000); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.si-sfrom, .si-sto, .si-ssave, .si-smult { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .si-sfrom { font-family: var(--font-mono); color: var(--gray-700); text-align: right; text-decoration: line-through; }
 .si-sarrow { color: var(--gray-700); text-align: center; }
 .si-sto { font-family: var(--font-mono); color: var(--gray-1000); text-align: right; }
