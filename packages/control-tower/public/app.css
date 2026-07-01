@@ -1354,22 +1354,25 @@ select.input {
   font-size: 18px;
 }
 
-/* Nested session graph — everything faint by default; hovering a node lights up its branch. */
+/* Nested session graph — clearly visible by default; hovering a node dims the rest
+   and lights up its branch. Centered in the canvas (safe = fall back to start-align
+   and stay scrollable when the tree is larger than the viewport). */
 .node-canvas.nested {
   overscroll-behavior: contain;   /* two-finger / drag pan stays in the graph, never scrolls the page */
   touch-action: pan-x pan-y;
   cursor: grab;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
 }
 .node-canvas.nested:active { cursor: grabbing; }
+.node-canvas.nested > svg { flex: none; }   /* don't let flex shrink the zoomed SVG */
 .node-canvas.nested .sfold { cursor: pointer; }
-.node-canvas.nested .snode,
-.node-canvas.nested .sedge {
-  opacity: .42;
-  transition: opacity .1s ease;
-}
+.node-canvas.nested .snode { opacity: .92; transition: opacity .1s ease; }
+.node-canvas.nested .sedge { opacity: .55; transition: opacity .1s ease; }
 .node-canvas.nested.hovering .snode,
 .node-canvas.nested.hovering .sedge {
-  opacity: .1;
+  opacity: .12;
 }
 .node-canvas.nested.hovering .snode.hl,
 .node-canvas.nested.hovering .sedge.hl {
