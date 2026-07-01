@@ -2209,14 +2209,82 @@ document.querySelectorAll('.seg-btn[data-subview]').forEach((b) => b.addEventLis
 
 // ── Session waterfall: the main session + everything it launched, on one time axis ──
 const SESSION_KIND_COLOR = { workflow: '#6366f1', subagent: '#14b8a6' };
+let sessionView = 'waterfall';   // 'waterfall' | 'nodes'
+let lastSession = null;          // cached {workflows, sub} so toggling view doesn't re-fetch
 async function loadSessionWaterfall() {
   const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap) return;
   wrap.innerHTML = '<p class="muted" style="padding:12px;font-size:12px">Loading session…</p>';
   let workflows = [], sub = null;
   try { [workflows, sub] = await Promise.all([apiFetch('/v1/observed'), apiFetch('/v1/subagents')]); }
   catch (err) { wrap.innerHTML = `<p class="muted" style="padding:12px">Could not load session: ${esc(err.message)}</p>`; return; }
+  lastSession = { workflows, sub };
   renderSessionHeader(workflows, sub);
-  wrap.innerHTML = buildSessionWaterfallSvg(workflows, sub);
+  renderSessionView();
+}
+function renderSessionView() {
+  const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap || !lastSession) return;
+  const { workflows, sub } = lastSession;
+  wrap.innerHTML = sessionView === 'nodes' ? buildSessionNodesSvg(workflows, sub) : buildSessionWaterfallSvg(workflows, sub);
+}
+// Build the merged item list once (used by both the waterfall and the node view).
+function sessionItems(workflows, sub) {
+  const items = [];
+  for (const w of (workflows || [])) {
+    const s = w.startedAt ? Date.parse(w.startedAt) : (w.timestamp && w.durationMs ? Date.parse(w.timestamp) - w.durationMs : 0);
+    if (!s) continue;
+    items.push({ kind: 'workflow', navId: w.runId, label: w.name || w.runId, startMs: s, dur: w.durationMs || 0, cost: w.costUsd || 0, extra: `${w.agentCount || 0} agents` });
+  }
+  walkForest(sub && sub.root, (n) => {
+    if (!n || n.agentId === MAIN_SESSION_ID) return;
+    const s = n.startedAtMs || 0; if (!s) return;
+    items.push({ kind: 'subagent', navId: n.agentId, label: n.description || n.agentId, startMs: s, dur: n.ms || 0, cost: n.costUsd || 0, extra: n.agentType || '' });
+  });
+  items.sort((a, b) => a.startMs - b.startMs || b.dur - a.dur);
+  return items;
+}
+function sessionLegend() {
+  const sw = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:2px;background:${c};display:inline-block"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
+  return `<div style="margin-top:6px">${sw(SESSION_KIND_COLOR.workflow, 'Workflow')}${sw(SESSION_KIND_COLOR.subagent, 'Subagent (direct)')}</div>`;
+}
+
+// Node/call-graph view: the main session pinned LEFT, fanning out to a vertical list of
+// everything it launched on the right. Left-rooted so the root is always visible and there's
+// no horizontal scroll even with a large fan-out (it scrolls vertically instead).
+function buildSessionNodesSvg(workflows, sub) {
+  const items = sessionItems(workflows, sub);
+  if (!items.length) return ctEmptyHtml('Nothing launched in this session yet', 'When the session runs a Workflow or spawns a subagent, it appears here.', '');
+  const ROOT_W = 150, CHILD_W = 190, BOX_H = 38, ROW_H = 46, padX = 16, padTop = 12, GAP = 80;
+  const n = items.length;
+  const childX = padX + ROOT_W + GAP;
+  const H = padTop * 2 + n * ROW_H;
+  const W = childX + CHILD_W + 16;
+  const rootRight = padX + ROOT_W;
+  const rootY = Math.max(padTop, padTop + (n * ROW_H) / 2 - BOX_H / 2);
+  const rootMidY = rootY + BOX_H / 2;
+  const midX = rootRight + GAP / 2;
+  const edges = [], boxes = [];
+  items.forEach((it, i) => {
+    const by = padTop + i * ROW_H, midY = by + BOX_H / 2;
+    const color = SESSION_KIND_COLOR[it.kind];
+    edges.push(`<path d="M ${rootRight} ${rootMidY.toFixed(1)} H ${midX.toFixed(1)} V ${midY.toFixed(1)} H ${childX}" stroke="${color}" stroke-opacity="0.4" stroke-width="1.5" fill="none"/>`);
+    const navKind = it.kind === 'workflow' ? 'wf' : 'sub';
+    boxes.push(
+      `<g data-nav-kind="${navKind}" data-nav-id="${esc(it.navId)}" style="cursor:pointer">`
+      + `<rect x="${childX}" y="${by}" width="${CHILD_W}" height="${BOX_H}" rx="6" fill="${color}" fill-opacity="0.14" stroke="${color}" stroke-width="1.25"/>`
+      + `<circle cx="${childX + 11}" cy="${by + 14}" r="3.5" fill="${color}"/>`
+      + `<text x="${childX + 22}" y="${by + 17}" style="font-size:11px;fill:var(--gray-1000)">${esc(truncTxt(it.label, 22))}</text>`
+      + `<text x="${childX + 11}" y="${by + 30}" style="font-size:9px;fill:var(--gray-700)">${it.kind} · ${fmtMs(it.dur)} · ${fmtUsdShort(it.cost)}</text>`
+      + `<title>${esc(it.label)} · ${it.kind} · ${fmtMs(it.dur)} · ${fmtUsdShort(it.cost)}${it.extra ? ' · ' + esc(it.extra) : ''}</title></g>`,
+    );
+  });
+  const rootBox = `<g><rect x="${padX}" y="${rootY.toFixed(1)}" width="${ROOT_W}" height="${BOX_H}" rx="6" fill="#8a8f98" fill-opacity="0.18" stroke="var(--gray-700)" stroke-width="1.25"/>`
+    + `<circle cx="${padX + 11}" cy="${(rootY + 14).toFixed(1)}" r="4" fill="var(--gray-700)"/>`
+    + `<text x="${padX + 22}" y="${(rootY + 17).toFixed(1)}" style="font-size:11px;font-weight:600;fill:var(--gray-1000)">main session</text>`
+    + `<text x="${padX + 11}" y="${(rootY + 30).toFixed(1)}" style="font-size:9px;fill:var(--gray-700)">${items.length} launched</text></g>`;
+  const svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" style="max-width:100%;height:auto;font-family:ui-monospace,monospace">${edges.join('')}${rootBox}${boxes.join('')}</svg>`;
+  return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px">${svg}</div>`
+    + sessionLegend()
+    + '<div class="muted" style="font-size:11px;margin-top:6px">The main session (left) and everything it launched, newest work downward. Click a node to open it in its tab.</div>';
 }
 
 function renderSessionHeader(workflows, sub) {
@@ -2318,6 +2386,12 @@ document.getElementById('session-waterfall-wrap')?.addEventListener('click', (e)
   if (kind === 'wf') navigateToRun(id); else navigateToSubagent(id);
 });
 document.getElementById('session-refresh')?.addEventListener('click', () => loadSessionWaterfall());
+document.querySelectorAll('[data-sessionview]').forEach((b) => b.addEventListener('click', () => {
+  sessionView = b.getAttribute('data-sessionview');
+  document.querySelectorAll('[data-sessionview]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  b.classList.toggle('active', true);
+  renderSessionView();
+}));
 
 function setTab(tab) {
   const panels = { control: 'tab-control', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
