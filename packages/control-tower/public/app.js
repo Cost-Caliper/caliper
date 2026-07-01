@@ -2615,18 +2615,39 @@ function renderSessionInsight(workflows, sub, wfDetails) {
     + chip('Biggest single', fmtUsdShort(biggest.cost), esc(truncTxt(biggest.label, 22)));
   if (savings) chips += chip('Potential savings', fmtUsdShort(savings.save), `${savings.pct}% at OSS prices`, savings.save > 0 ? 'si-chip-save' : 'si-chip-warn');
 
+  // Multiplier ("11× cheaper") — how many times cheaper the substitute is.
+  const multTxt = (cur, alt) => {
+    if (!alt || alt <= 0) return '—';
+    const r = cur / alt;
+    return r >= 1 ? `${r >= 10 ? Math.round(r) : r.toFixed(1)}× cheaper` : `${(1 / r).toFixed(1)}× pricier`;
+  };
+
   // "What if we ran open-source models instead" panel — hypothetical, clearly labelled.
   let savePanel = '';
   if (savings) {
     const srow = (l) => `<div class="si-srow"><span class="si-lg-dot" style="background:${modelColor(l.tier)}"></span>`
       + `<span class="si-slabel">${l.tier} → ${esc(l.sub.name)}</span>`
       + `<span class="si-sfrom">${fmtUsdShort(l.cur)}</span><span class="si-sarrow">→</span><span class="si-sto">${fmtUsdShort(l.subCost)}</span>`
-      + `<span class="si-ssave ${l.save >= 0 ? 'pos' : 'neg'}">${l.save >= 0 ? 'save ' : '+'} ${fmtUsdShort(Math.abs(l.save))}</span></div>`;
+      + `<span class="si-ssave ${l.save >= 0 ? 'pos' : 'neg'}">${l.save >= 0 ? 'save ' : '+'}${fmtUsdShort(Math.abs(l.save))}</span>`
+      + `<span class="si-smult ${l.save >= 0 ? 'pos' : 'neg'}">${multTxt(l.cur, l.subCost)}</span></div>`;
     savePanel = `<div class="si-save">`
-      + `<div class="si-lb-title">Potential savings — swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF} · hypothetical</span></div>`
+      + `<div class="si-lb-title">Potential savings<a class="si-ast" href="#si-method">*</a> — swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF}</span></div>`
       + savings.lines.map(srow).join('')
-      + `<div class="si-stotal">≈ <strong>${fmtUsdShort(savings.alt)}</strong> instead of <strong>${fmtUsdShort(savings.cur)}</strong> on these tiers — save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%)</div>`
-      + `<div class="si-foot muted">Illustrative only: re-prices the <em>same token counts</em> at OpenRouter list prices, cache-aware (cache reads at each model's cached-input rate). Ignores any quality/capability difference between models — an OSS model may need more attempts.</div></div>`;
+      + `<div class="si-stotal">≈ <strong>${fmtUsdShort(savings.alt)}</strong> instead of <strong>${fmtUsdShort(savings.cur)}</strong> on these tiers — save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%, <strong>${multTxt(savings.cur, savings.alt)}</strong>)</div></div>`;
+  }
+
+  // "*" methodology section — where every number comes from, and the idea behind it.
+  let method = '';
+  if (savings) {
+    const subList = ['opus', 'sonnet', 'haiku'].map((t) => { const s = SUBSTITUTE[t]; return `<li><strong>${t}</strong> → ${esc(s.name)} (<code>${esc(s.or)}</code>): $${s.prompt}/M in · $${s.completion}/M out · $${s.cacheRd}/M cache-read</li>`; }).join('');
+    method = `<details class="si-method" id="si-method">`
+      + `<summary>* How “potential savings” is calculated &amp; where the prices come from</summary>`
+      + `<div class="si-method-body">`
+      + `<p><strong>Your current cost</strong> is reconstructed from the real token counts in each run's transcript (input, output, cache-write, cache-read), priced at Anthropic's published rates and cache-aware — cache-write ×1.25, cache-read ×0.10. For this session's Opus that is $5/M in · $25/M out · $0.50/M cache-read, which matches Anthropic <strong>Claude Opus 4.8</strong>'s public pricing. It is an estimate from token counts, not a billed invoice.</p>`
+      + `<p><strong>The substitute cost</strong> re-prices those <em>same</em> token counts at an open model's <strong>OpenRouter list price</strong> (captured ${SUBSTITUTE_ASOF}), the identical cache-aware way: (input + cache-write) at the prompt rate, cache-read at the model's cached-input rate, output at the completion rate. Because most agent tokens are cache reads (re-sent context), a model's <em>cached-input</em> price — not its headline price — usually decides the comparison.</p>`
+      + `<p><strong>Substitutes &amp; prices used:</strong></p><ul class="si-method-list">${subList}</ul>`
+      + `<p class="si-method-warn"><strong>What this does NOT capture:</strong> whether an open model would do the work as well. It assumes identical token usage; a cheaper model may need more attempts or produce worse results, which erodes the saving. Treat it as a ceiling on token economics, not a promise — and prices change, so re-check OpenRouter.</p>`
+      + `</div></details>`;
   }
 
   host.innerHTML = `<div class="session-insight-card">`
@@ -2634,9 +2655,16 @@ function renderSessionInsight(workflows, sub, wfDetails) {
     + `<div class="si-chips">${chips}</div>`
     + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${rows}${more}</div>`
     + savePanel
-    + `<div class="si-foot muted">$ = cache-aware <em>estimate</em>, not billed · bars split by model · shares are of the items shown here · click a bar to open it</div></div>`;
+    + `<div class="si-foot muted">$ = cache-aware <em>estimate</em>, not billed · bars split by model · shares are of the items shown here · click a bar to open it</div>`
+    + method
+    + `</div>`;
 }
 document.getElementById('session-insight')?.addEventListener('click', (e) => {
+  if (e.target.closest('.si-ast')) { // the "*" opens the methodology section
+    e.preventDefault();
+    const d = document.getElementById('si-method'); if (d) { d.open = true; d.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    return;
+  }
   const el = e.target.closest('[data-nav-kind]'); if (!el) return;
   const kind = el.getAttribute('data-nav-kind'), id = el.getAttribute('data-nav-id');
   if (kind === 'wf') navigateToRun(id); else navigateToSubagent(id);

@@ -1430,7 +1430,7 @@ select.input {
 .si-save { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .si-srow {
   display: grid;
-  grid-template-columns: 10px minmax(180px, 1.4fr) 56px 16px 56px 90px;
+  grid-template-columns: 10px minmax(130px, 1.1fr) 50px 14px 50px 68px 82px;
   align-items: center; gap: 8px; padding: 3px 4px; font-size: 12px;
 }
 .si-slabel { color: var(--gray-1000); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1440,5 +1440,26 @@ select.input {
 .si-ssave { font-family: var(--font-mono); text-align: right; }
 .si-ssave.pos { color: var(--green); }
 .si-ssave.neg { color: var(--amber); }
+.si-smult { font-family: var(--font-mono); font-weight: 600; text-align: right; }
+.si-smult.pos { color: var(--green); }
+.si-smult.neg { color: var(--amber); }
 .si-stotal { font-size: 12.5px; color: var(--gray-900); margin: 8px 4px 4px; }
 .si-stotal strong { color: var(--gray-1000); font-family: var(--font-mono); }
+.si-ast { color: var(--blue); text-decoration: none; font-weight: 600; }
+.si-ast:hover { text-decoration: underline; }
+
+/* "*" methodology section — where the numbers come from */
+.si-method { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.si-method > summary { font-size: 11.5px; color: var(--gray-700); cursor: pointer; list-style: none; padding: 4px 0; }
+.si-method > summary::-webkit-details-marker { display: none; }
+.si-method > summary::before { content: '▸'; margin-right: 6px; color: var(--gray-700); font-size: 10px; }
+.si-method[open] > summary::before { content: '▾'; }
+.si-method > summary:hover { color: var(--gray-1000); }
+.si-method-body { font-size: 12px; color: var(--gray-900); line-height: 1.55; padding: 4px 4px 6px; max-width: 900px; }
+.si-method-body p { margin: 0 0 8px; }
+.si-method-body strong { color: var(--gray-1000); }
+.si-method-body code { font-family: var(--font-mono); font-size: 11px; color: var(--gray-700); }
+.si-method-list { margin: 0 0 8px; padding-left: 18px; }
+.si-method-list li { font-family: var(--font-mono); font-size: 11.5px; color: var(--gray-900); margin: 2px 0; }
+.si-method-list li strong { color: var(--gray-1000); font-family: var(--font-sans); }
+.si-method-warn { border-left: 2px solid var(--amber); padding-left: 10px; color: var(--gray-900); }
