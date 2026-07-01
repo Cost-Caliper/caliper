@@ -106,9 +106,29 @@
        Subagents are the two visible views. To restore Control: remove `hidden` from its button. -->
   <div class="tabbar" role="tablist" aria-label="Dashboard mode">
     <button class="tabbar-btn" data-tab="control" role="tab" type="button" aria-selected="false" hidden>Control (shim)</button>
-    <button class="tabbar-btn active" data-tab="observe" role="tab" type="button" aria-selected="true">Workflows</button>
+    <button class="tabbar-btn active" data-tab="session" role="tab" type="button" aria-selected="true">Session</button>
+    <button class="tabbar-btn" data-tab="observe" role="tab" type="button" aria-selected="false">Workflows</button>
     <button class="tabbar-btn" data-tab="subagents" role="tab" type="button" aria-selected="false">Subagents</button>
   </div>
+
+  <div id="tab-session" class="tab-panel">
+  <!-- ── Session waterfall: the main session and everything it launched, on a time axis ── -->
+    <section class="card observed-panel" id="session-panel" aria-labelledby="session-heading">
+      <div class="section-header">
+        <h2 class="section-title" id="session-heading">
+          Session
+          <span class="source-badge badge-observed" title="The main Claude Code session and everything it launched — workflows + direct subagents — on one time axis">waterfall</span>
+        </h2>
+        <div class="flex-center gap-8">
+          <button class="btn btn-secondary btn-sm" type="button" id="session-refresh" aria-label="Refresh session">Refresh</button>
+        </div>
+      </div>
+      <div id="session-context" class="project-context"></div>
+      <div id="session-rollup" class="label-13 muted" style="margin:6px 0 2px"></div>
+      <div id="session-waterfall-wrap" style="margin-top:10px"></div>
+      <p class="observed-caveat label-13 muted" style="margin-top:12px">Every workflow and subagent here was launched by the main session (the conversation). Bars are placed on a shared time axis by real start/end timestamps; x-position ≈ when each was initiated, length ≈ duration. Cost is a cache-aware estimate.</p>
+    </section>
+  </div><!-- /tab-session -->
 
   <div id="tab-control" class="tab-panel" hidden>
     <div class="muted" style="font-size:12px;margin:0 0 12px;line-height:1.5;background:var(--gray-100);border:1px solid var(--border);border-radius:6px;padding:10px">

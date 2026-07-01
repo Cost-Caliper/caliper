@@ -1967,7 +1967,7 @@ function buildSubGraphSvg(root) {
   }
 
   const svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" style="max-width:none;height:auto;font-family:ui-monospace,monospace">${edgeSvg}${nodeSvg}</svg>`;
-  return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px">${svg}</div>${subGraphLegend()}`;
+  return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px;text-align:center">${svg}</div>${subGraphLegend()}`;
 }
 
 function subGraphLegend() {
@@ -2207,8 +2207,120 @@ function setSubView(v) {
 }
 document.querySelectorAll('.seg-btn[data-subview]').forEach((b) => b.addEventListener('click', () => setSubView(b.dataset.subview)));
 
+// ── Session waterfall: the main session + everything it launched, on one time axis ──
+const SESSION_KIND_COLOR = { workflow: '#6366f1', subagent: '#14b8a6' };
+async function loadSessionWaterfall() {
+  const wrap = document.getElementById('session-waterfall-wrap'); if (!wrap) return;
+  wrap.innerHTML = '<p class="muted" style="padding:12px;font-size:12px">Loading session…</p>';
+  let workflows = [], sub = null;
+  try { [workflows, sub] = await Promise.all([apiFetch('/v1/observed'), apiFetch('/v1/subagents')]); }
+  catch (err) { wrap.innerHTML = `<p class="muted" style="padding:12px">Could not load session: ${esc(err.message)}</p>`; return; }
+  renderSessionHeader(workflows, sub);
+  wrap.innerHTML = buildSessionWaterfallSvg(workflows, sub);
+}
+
+function renderSessionHeader(workflows, sub) {
+  const ctx = document.getElementById('session-context'); const roll = document.getElementById('session-rollup');
+  const dir = sub?.cwd || (workflows && workflows[0] && workflows[0].cwd) || null;
+  const branch = sub?.gitBranch || (workflows && workflows[0] && workflows[0].gitBranch) || null;
+  const sess = sub?.sessionId || null;
+  if (ctx) {
+    ctx.innerHTML = projectContextHtml([
+      dir ? `<span title="${esc(dir)}">${esc(homeAbbrev(dir))}</span>` : '',
+      branch ? `branch ${esc(branch)}` : '',
+      sess ? `session ${esc(String(sess).slice(0, 8))}` : '',
+    ].filter(Boolean));
+  }
+  if (roll) {
+    const wf = (workflows || []).length;
+    const subN = sub?.rollup?.totalSubagents || 0;
+    const totalCost = (workflows || []).reduce((s, w) => s + (w.costUsd || 0), 0) + (sub?.rollup?.totalCostUsd || 0);
+    roll.textContent = `${wf} workflow${wf === 1 ? '' : 's'} · ${subN} direct subagent${subN === 1 ? '' : 's'} · ${fmtUsdShort(totalCost)} total`;
+  }
+}
+
+function buildSessionWaterfallSvg(workflows, sub) {
+  const items = [];
+  for (const w of (workflows || [])) {
+    const s = w.startedAt ? Date.parse(w.startedAt) : (w.timestamp && w.durationMs ? Date.parse(w.timestamp) - w.durationMs : 0);
+    if (!s) continue;
+    items.push({ kind: 'workflow', navId: w.runId, label: w.name || w.runId, startMs: s, dur: w.durationMs || 0, cost: w.costUsd || 0, extra: `${w.agentCount || 0} agents` });
+  }
+  walkForest(sub && sub.root, (n) => {
+    if (!n || n.agentId === MAIN_SESSION_ID) return;
+    const s = n.startedAtMs || 0; if (!s) return;
+    items.push({ kind: 'subagent', navId: n.agentId, label: n.description || n.agentId, startMs: s, dur: n.ms || 0, cost: n.costUsd || 0, extra: n.agentType || '' });
+  });
+  if (!items.length) return ctEmptyHtml('Nothing launched in this session yet', 'When the session runs a Workflow or spawns a subagent, it appears here on a shared time axis.', '');
+  items.sort((a, b) => a.startMs - b.startMs || b.dur - a.dur);
+  const minStart = Math.min(...items.map((i) => i.startMs));
+  const maxEnd = Math.max(...items.map((i) => i.startMs + i.dur));
+  const span = Math.max(1, maxEnd - minStart);
+  const W = 960, rowH = 22, padL = 210, padR = 86, innerW = W - padL - padR, barH = 12;
+  const xOf = (absMs) => padL + ((Math.max(minStart, absMs) - minStart) / span) * innerW;
+
+  let y = 8;
+  const parts = [];
+  // Row 0: the session itself, spanning the whole window (it launched everything).
+  parts.push(
+    `<circle cx="12" cy="${y + barH / 2}" r="4" fill="var(--gray-700)"></circle>`
+    + `<text x="${padL - 8}" y="${y + 10}" text-anchor="end" style="font-size:11px;font-weight:600;fill:var(--gray-1000)">main session</text>`
+    + `<rect x="${xOf(minStart)}" y="${y}" width="${innerW.toFixed(1)}" height="${barH}" rx="2" fill="#8a8f98" opacity="0.22"><title>main session — the conversation that launched everything (${fmtMs(span)})</title></rect>`
+    + `<text x="${(padL + innerW + 6).toFixed(1)}" y="${y + 10}" style="font-size:9.5px;fill:var(--gray-700)">${fmtMs(span)}</text>`,
+  );
+  y += rowH + 4;
+  for (const it of items) {
+    const x0 = xOf(it.startMs), x1 = xOf(it.startMs + it.dur), bw = Math.max(2, x1 - x0);
+    const color = SESSION_KIND_COLOR[it.kind];
+    const navKind = it.kind === 'workflow' ? 'wf' : 'sub';
+    const label = esc(truncTxt(it.label, 26));
+    parts.push(
+      `<circle cx="24" cy="${y + barH / 2}" r="3.5" fill="${color}"><title>${it.kind}</title></circle>`
+      + `<text data-nav-kind="${navKind}" data-nav-id="${esc(it.navId)}" x="${padL - 8}" y="${y + 10}" text-anchor="end" style="cursor:pointer;font-size:11px;fill:var(--gray-1000)">${label}</text>`
+      + `<rect data-nav-kind="${navKind}" data-nav-id="${esc(it.navId)}" x="${x0.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${barH}" rx="2" fill="${color}" opacity="0.85" style="cursor:pointer"><title>${esc(it.label)} · ${it.kind} · ${fmtMs(it.dur)} · ${fmtUsdShort(it.cost)}${it.extra ? ' · ' + esc(it.extra) : ''}</title></rect>`
+      + `<text x="${(x1 + 6).toFixed(1)}" y="${y + 10}" style="font-size:9.5px;fill:var(--gray-700)">${fmtMs(it.dur)}</text>`,
+    );
+    y += rowH;
+  }
+  const H = y + 8;
+  const sw = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:2px;background:${c};display:inline-block"></span><span style="font-size:11px;color:var(--gray-900)">${t}</span></span>`;
+  const legend = `<div style="margin-top:6px">${sw(SESSION_KIND_COLOR.workflow, 'Workflow')}${sw(SESSION_KIND_COLOR.subagent, 'Subagent (direct)')}</div>`;
+  const svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto">${parts.join('')}</svg>`;
+  return `<div style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:6px;background:var(--bg-100);padding:8px">${svg}</div>`
+    + legend
+    + '<div class="muted" style="font-size:11px;margin-top:6px">Everything the session launched, sorted by start time. Click a label or bar to open it in its tab.</div>';
+}
+
+// Navigate from the waterfall to an item's own tab + open it.
+async function navigateToRun(runId) {
+  document.querySelector('.tabbar-btn[data-tab="observe"]')?.click();
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(runId) : runId;
+  // Poll until loadObservedList has rendered the row (localhost fetch is fast, but async).
+  for (let i = 0; i < 25; i++) {
+    const item = observedEls.list?.querySelector(`.obs-run-item[data-run-id="${sel}"]`);
+    if (item) {
+      const row = item.querySelector('.obs-run-row');
+      if (row && row.getAttribute('aria-expanded') !== 'true') toggleItem(item);
+      item.querySelector('.obs-run-row')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 80));
+  }
+}
+async function navigateToSubagent(agentId) {
+  document.querySelector('.tabbar-btn[data-tab="subagents"]')?.click();
+  await new Promise((r) => setTimeout(r, 320));
+  selectSubagent(agentId);
+}
+document.getElementById('session-waterfall-wrap')?.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-nav-kind]'); if (!el) return;
+  const kind = el.getAttribute('data-nav-kind'); const id = el.getAttribute('data-nav-id');
+  if (kind === 'wf') navigateToRun(id); else navigateToSubagent(id);
+});
+document.getElementById('session-refresh')?.addEventListener('click', () => loadSessionWaterfall());
+
 function setTab(tab) {
-  const panels = { control: 'tab-control', observe: 'tab-observe', subagents: 'tab-subagents' };
+  const panels = { control: 'tab-control', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
   for (const [t, id] of Object.entries(panels)) { const el = document.getElementById(id); if (el) el.hidden = (t !== tab); }
   // The run-controls chrome belongs to the Control tab only.
   const isControl = tab === 'control';
@@ -2221,10 +2333,11 @@ function setTab(tab) {
     b.setAttribute('aria-selected', sel ? 'true' : 'false');
     b.classList.toggle('active', sel);
   });
+  if (tab === 'session') loadSessionWaterfall();
   if (tab === 'observe') loadObservedList();
   if (tab === 'subagents') loadSubagentTree();
 }
 document.querySelectorAll('.tabbar-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
 init();
-setTab('observe');
+setTab('session');
