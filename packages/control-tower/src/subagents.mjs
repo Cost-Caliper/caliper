@@ -244,6 +244,7 @@ export function scanSubagentTree(sessDir) {
     startedAt: mainParse.firstTimestamp || null,
     startedAtMs: mainParse.firstTimestamp ? (Date.parse(mainParse.firstTimestamp) || 0) : 0,
     toolCalls: mainParse.toolCalls || 0,
+    tools: mainParse.tools || [],
     turns: mainParse.assistantTurns || 0,
     status: 'session',
   } : {}

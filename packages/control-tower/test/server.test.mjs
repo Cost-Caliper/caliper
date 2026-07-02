@@ -54,6 +54,24 @@ async function get(path) {
   })
 }
 
+async function getWithHeaders(path, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(BASE + path, { method: 'GET', headers }, (res) => {
+      let body = ''
+      res.on('data', (d) => { body += d })
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, headers: res.headers, body: JSON.parse(body) })
+        } catch {
+          resolve({ status: res.statusCode, headers: res.headers, body })
+        }
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 // Helper: HTTP POST -> JSON
 async function post(path, data) {
   return new Promise((resolve, reject) => {
@@ -138,6 +156,35 @@ test('GET /v1/health — returns expected shape', async () => {
   assert.ok(typeof res.body.workflowCount === 'number', 'workflowCount is a number')
   assert.ok(res.body.workflowCount >= 0, 'workflowCount >= 0')
   assert.ok(typeof res.body.cassetteCount === 'number', 'cassetteCount is a number')
+})
+
+test('browser guard: rejects cross-origin localhost reads', async () => {
+  let res
+  try {
+    res = await getWithHeaders('/v1/health', { Origin: 'https://example.invalid' })
+  } catch { return }
+  assert.equal(res.status, 403)
+  assert.equal(res.body?.error?.code, 'FORBIDDEN_ORIGIN')
+  assert.equal(res.headers['access-control-allow-origin'], undefined)
+})
+
+test('browser guard: allows same-origin localhost reads', async () => {
+  let res
+  try {
+    res = await getWithHeaders('/v1/health', { Origin: BASE })
+  } catch { return }
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['access-control-allow-origin'], BASE)
+  assert.equal(res.body.ok, true)
+})
+
+test('browser guard: rejects non-local Host headers', async () => {
+  let res
+  try {
+    res = await getWithHeaders('/v1/health', { Host: `example.invalid:${SELF_PORT}` })
+  } catch { return }
+  assert.equal(res.status, 403)
+  assert.equal(res.body?.error?.code, 'FORBIDDEN_ORIGIN')
 })
 
 test('GET /v1/workflows — returns array with known fields', async () => {

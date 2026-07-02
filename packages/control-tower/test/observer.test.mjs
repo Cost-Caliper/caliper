@@ -96,6 +96,12 @@ test('costOfUsage hand-check for known token counts', () => {
   assert.ok(cost < 0.01, 'cost should be < $0.01 for these tiny token counts')
 })
 
+test('observed run readers reject traversal-shaped run ids', () => {
+  assert.equal(parseRunJson('../secrets', '/tmp/session'), null)
+  assert.equal(parseRunJson('..%2Fsecrets', '/tmp/session'), null)
+  assert.equal(reconstructRun('../secrets', '/tmp/session'), null)
+})
+
 // ── wf_8de34f64-90f: conditional-shunt-probe ──────────────────────────────────
 test('wf_8de34f64-90f: parseRunJson returns correct structure', (t) => {
   if (skipIfMissing('8de34f64-90f', t)) return

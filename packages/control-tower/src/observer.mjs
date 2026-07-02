@@ -15,6 +15,9 @@ import { readFileSync, existsSync, readdirSync, watch } from 'node:fs'
 import { join, basename } from 'node:path'
 import { costOfUsage, tierFromModel } from './observe-cost.mjs'
 
+const RUN_ID_RE = /^[0-9a-f-]+$/i
+const AGENT_ID_RE = /^[0-9a-f]+$/i
+
 // ── Session dir resolution ────────────────────────────────────────────────────
 //
 // The Claude Code session dir is:
@@ -53,7 +56,7 @@ function parseTraceLine(line) {
 // saved file when the run came from a named/saved workflow), and the exact source the
 // harness executed (embedded in the run record). Used by GET /v1/observed/:id/script.
 export function readRunScript(runId, sessDir) {
-  if (!/^[0-9a-f-]+$/i.test(String(runId))) return null // guard path traversal
+  if (!RUN_ID_RE.test(String(runId))) return null // guard path traversal
   const wfPath = join(sessDir, 'workflows', `wf_${runId}.json`)
   if (!existsSync(wfPath)) return null
   let raw
@@ -66,6 +69,7 @@ export function readRunScript(runId, sessDir) {
 }
 
 export function parseRunJson(runId, sessDir) {
+  if (!RUN_ID_RE.test(String(runId))) return null // guard path traversal
   const wfPath = join(sessDir, 'workflows', `wf_${runId}.json`)
   if (!existsSync(wfPath)) return null
 
@@ -271,13 +275,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
     output_tokens: 0,
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
-    cache_5m_input_tokens: 0,  // TTL buckets — cache WRITES price differently (5m ×1.25, 1h ×2.0)
-    cache_1h_input_tokens: 0,
   }
-  // Streamed transcripts repeat the SAME usage under one requestId across several
-  // assistant rows — summing every row double-counts (verified 2× vs ccusage).
-  // Usage is counted once per requestId; rows without one count individually.
-  const seenRequestIds = new Set()
   const textOf = (content) =>
     typeof content === 'string' ? content
       : Array.isArray(content) ? content.filter((b) => b && b.type === 'text').map((b) => b.text || '').join('\n')
@@ -330,19 +328,10 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
     assistantTurns++
     if (!model && msg.model) model = msg.model
     const usage = msg.usage || {}
-    const requestId = entry.requestId || (msg.id ? String(msg.id) : null)
-    const countUsage = requestId ? !seenRequestIds.has(requestId) : true
-    if (requestId) seenRequestIds.add(requestId)
-    if (countUsage) {
-      totalUsage.input_tokens += usage.input_tokens || 0
-      totalUsage.output_tokens += usage.output_tokens || 0
-      totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0
-      totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0
-      const cc = usage.cache_creation || null
-      // Unbucketed writes (older transcripts) count as 5m — the legacy ×1.25 rate.
-      totalUsage.cache_5m_input_tokens += cc ? (cc.ephemeral_5m_input_tokens || 0) : (usage.cache_creation_input_tokens || 0)
-      totalUsage.cache_1h_input_tokens += cc ? (cc.ephemeral_1h_input_tokens || 0) : 0
-    }
+    totalUsage.input_tokens += usage.input_tokens || 0
+    totalUsage.output_tokens += usage.output_tokens || 0
+    totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0
+    totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0
     const turnTools = []    // tool names this assistant turn requested (labels the tool span)
     const turnToolUses = [] // [{id,name,input}] for pairing with tool_results (full mode)
     if (Array.isArray(msg.content)) {
@@ -358,8 +347,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
     const turnText = textOf(msg.content).trim()
     if (!light && !isNaN(tsMs)) events.push({
       tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses,
-      usage: countUsage ? usage : {}, // dupe rows carry {} so per-segment costs don't double-count
-      stopReason: msg.stop_reason || null, model: msg.model || null, thinking: trunc(thinkingOf(msg.content), 8000),
+      usage, stopReason: msg.stop_reason || null, model: msg.model || null, thinking: trunc(thinkingOf(msg.content), 8000),
     })
     if (!light && turnText) conversation.push({ role: 'assistant', ts: entry.timestamp || null, text: trunc(turnText, 2000) })
     if (turnText) output = turnText
@@ -432,6 +420,7 @@ export function reconstructRun(runId, sessDir, extraBeacons = [], beaconsByInstr
 
   for (const agEnt of agentEntries) {
     const agentId = agEnt.agentId
+    if (!AGENT_ID_RE.test(String(agentId || ''))) continue
     const transcriptPath = join(agentDir, `agent-${agentId}.jsonl`)
     const transcript = parseAgentTranscript(transcriptPath)
     if (!runCwd && transcript?.cwd) runCwd = transcript.cwd

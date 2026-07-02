@@ -4,7 +4,7 @@
 // shows the real workflow runs from that session).
 //
 // Usage:
-//   node scripts/launch-control-tower.mjs [--session-dir <path>] [--port <n>]
+//   node scripts/launch-control-tower.mjs [--session-dir <path>] [--port <n>] [--daemon]
 //
 // Port: by default a RANDOM free high port (40000–59999) is chosen so the dashboard
 // never collides with the common dev ports builders use (3000/5173/8080/8787/…).
@@ -20,7 +20,7 @@
 //    without a session dir; only the native-observe tab needs one.)
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs'
 import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -38,6 +38,7 @@ function flag(name) {
   const i = argv.indexOf(name)
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : null
 }
+const DAEMON = argv.includes('--daemon')
 // Explicit port override (--port or PORT). When absent we pick a random free high port.
 const PORT_OVERRIDE = flag('--port') || process.env.PORT || null
 
@@ -64,10 +65,14 @@ async function pickFreePort() {
 // ── dependency bootstrap ────────────────────────────────────────────────────────
 function ensureDeps(dir, label) {
   if (existsSync(join(dir, 'node_modules'))) return
-  console.error(`[launch] installing deps for ${label} …`)
-  const r = spawnSync('npm', ['install'], { cwd: dir, stdio: 'inherit' })
+  if (!existsSync(join(dir, 'package-lock.json'))) {
+    console.error(`[launch] refusing to install ${label}: package-lock.json is missing`)
+    process.exit(1)
+  }
+  console.error(`[launch] installing locked deps for ${label} …`)
+  const r = spawnSync('npm', ['ci', '--omit=dev', '--ignore-scripts'], { cwd: dir, stdio: 'inherit' })
   if (r.status !== 0) {
-    console.error(`[launch] npm install failed for ${label}`)
+    console.error(`[launch] npm ci failed for ${label}`)
     process.exit(1)
   }
 }
@@ -152,17 +157,63 @@ function resolveSessionDir() {
 ensureDeps(LENS_DIR, 'workflow-lens')
 ensureDeps(CT_DIR, 'control-tower')
 
+let daemonLogPath = null
+if (DAEMON) {
+  const logDir = process.env.CLAUDE_PLUGIN_DATA || join(homedir(), '.workflow-lens')
+  mkdirSync(logDir, { recursive: true })
+  daemonLogPath = join(logDir, `control-tower-${Date.now()}.log`)
+}
+function launchLog(line) {
+  console.error(line)
+  if (daemonLogPath) appendFileSync(daemonLogPath, line + '\n')
+}
+
 const sessionDir = resolveSessionDir()
 if (sessionDir) {
-  console.error(`[launch] observing session dir: ${sessionDir}`)
+  launchLog(`[launch] observing session dir: ${sessionDir}`)
 } else {
-  console.error('[launch] no session dir found — Observe tab disabled; Control/Replay tab still works')
+  launchLog('[launch] no session dir found — Observe tab disabled; Control/Replay tab still works')
 }
 
 const PORT = PORT_OVERRIDE || String(await pickFreePort())
 const env = { ...process.env, PORT }
 if (sessionDir) env.WFLENS_SESSION_DIR = sessionDir
 
-console.error(`[launch] starting Control Tower on http://localhost:${PORT}`)
+async function waitForHealth(url, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs
+  let lastErr = null
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${url}/v1/health`)
+      if (res.ok) return true
+      lastErr = new Error(`HTTP ${res.status}`)
+    } catch (e) {
+      lastErr = e
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350))
+  }
+  if (lastErr) launchLog(`[launch] health check failed: ${lastErr.message}`)
+  return false
+}
+
+const url = `http://localhost:${PORT}`
+
+if (DAEMON) {
+  launchLog(`[launch] starting Control Tower on ${url}`)
+  const fd = openSync(daemonLogPath, 'a')
+  const child = spawn('node', ['server.mjs'], { cwd: CT_DIR, env, detached: true, stdio: ['ignore', fd, fd] })
+  child.unref()
+  launchLog(`[launch] daemon pid: ${child.pid}`)
+  launchLog(`[launch] log file: ${daemonLogPath}`)
+  if (!(await waitForHealth(url))) {
+    try { process.kill(child.pid) } catch { /* already exited */ }
+    process.exit(1)
+  }
+  launchLog(`[launch] health ok: ${url}/v1/health`)
+  launchLog(`[launch] dashboard ready: ${url}`)
+  process.exit(0)
+}
+
+launchLog(`[launch] starting Control Tower on ${url}`)
 const child = spawn('node', ['server.mjs'], { cwd: CT_DIR, env, stdio: 'inherit' })
 child.on('exit', (code) => process.exit(code ?? 0))

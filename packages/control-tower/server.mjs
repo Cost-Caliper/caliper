@@ -31,12 +31,22 @@ import { deriveOptimizations } from './src/optimize.mjs'
 import { distillLearnings, groundingCheck } from '../workflow-lens/src/learnings.mjs'
 import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns, readRunScript } from './src/observer.mjs'
 import { scanSubagentTree, reconstructSubagent } from './src/subagents.mjs'
-import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData } from './src/sessions.mjs'
+import { scanProjectSessions, summarizeSessionFile, listProjects } from './src/sessions.mjs'
 import { homedir } from 'node:os'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.PORT || '8787', 10)
-const LENSVERSION = '0.1.0'  // workflow-lens version (from its package.json)
+const HOST = process.env.HOST || process.env.WFLENS_HOST || '127.0.0.1'
+const MAX_JSON_BODY_BYTES = 1_000_000
+function readPackageVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dir, '..', 'workflow-lens', 'package.json'), 'utf8'))
+    return pkg.version || 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+const LENSVERSION = readPackageVersion()
 
 // ── Bridge: session dir + beacon store ───────────────────────────────────────
 // SESS and PROJECT_DIR are MUTABLE: the Sessions browser can switch the active
@@ -122,16 +132,85 @@ function jsonErr(res, code, message, status = 400) {
   jsonOk(res, { error: { code, message } }, status)
 }
 
-async function parseBody(req) {
+function bodyErr(res, e) {
+  if (e && e.code === 'PAYLOAD_TOO_LARGE') {
+    jsonErr(res, 'PAYLOAD_TOO_LARGE', e.message, 413)
+    return
+  }
+  jsonErr(res, 'BAD_REQUEST', e.message, 400)
+}
+
+async function parseBody(req, { maxBytes = MAX_JSON_BODY_BYTES } = {}) {
   return new Promise((resolve, reject) => {
     let body = ''
-    req.on('data', (chunk) => { body += chunk })
+    let bytes = 0
+    let done = false
+    const fail = (e) => {
+      if (done) return
+      done = true
+      try { req.resume() } catch { /* ignore */ }
+      reject(e)
+    }
+    req.on('data', (chunk) => {
+      if (done) return
+      bytes += Buffer.byteLength(chunk)
+      if (bytes > maxBytes) {
+        const e = new Error(`JSON body exceeds ${maxBytes} bytes`)
+        e.code = 'PAYLOAD_TOO_LARGE'
+        fail(e)
+        return
+      }
+      body += chunk
+    })
     req.on('end', () => {
+      if (done) return
+      done = true
       try { resolve(body ? JSON.parse(body) : {}) }
       catch (e) { reject(new Error('Invalid JSON: ' + e.message)) }
     })
-    req.on('error', reject)
+    req.on('error', fail)
   })
+}
+
+function normalizeHost(value) {
+  return String(value || '').toLowerCase().replace(/^\[::1\]/, 'localhost').replace(/^127\.0\.0\.1/, 'localhost')
+}
+
+function hostName(value) {
+  const s = String(value || '')
+  if (s.startsWith('[')) return s.slice(1, s.indexOf(']')).toLowerCase()
+  return s.split(':')[0].toLowerCase()
+}
+
+function isLocalHost(value) {
+  const host = hostName(value)
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+}
+
+function requestOriginAllowed(req) {
+  const host = req.headers.host || ''
+  if (!isLocalHost(host)) return false
+  const origin = req.headers.origin
+  if (!origin) return true
+  try {
+    const u = new URL(origin)
+    return (u.protocol === 'http:' || u.protocol === 'https:')
+      && isLocalHost(u.host)
+      && normalizeHost(u.host) === normalizeHost(host)
+  } catch {
+    return false
+  }
+}
+
+function applyLocalBrowserGuard(req, res) {
+  res.setHeader('Vary', 'Origin')
+  if (!requestOriginAllowed(req)) {
+    jsonErr(res, 'FORBIDDEN_ORIGIN', 'Control Tower only accepts same-origin localhost browser requests', 403)
+    return false
+  }
+  const origin = req.headers.origin
+  if (origin) res.setHeader('Access-Control-Allow-Origin', origin)
+  return true
 }
 
 // ── Route matching ────────────────────────────────────────────────────────────
@@ -159,8 +238,7 @@ async function handle(req, res) {
   const url = req.url || '/'
   const urlPath = url.split('?')[0]
 
-  // CORS for dev
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  if (!applyLocalBrowserGuard(req, res)) return
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return }
@@ -187,15 +265,6 @@ async function handle(req, res) {
     return
   }
 
-  // ── GET /v1/home — cross-folder dashboard (recents, live, bounded spend rollups) ──
-  if (method === 'GET' && urlPath === '/v1/home') {
-    const home = buildHomeData(PROJECTS_ROOT)
-    home.activeProjectSlug = PROJECT_DIR ? basename(PROJECT_DIR) : null
-    home.activeSessionId = SESS ? basename(String(SESS).replace(/[/\\]+$/, '')) : null
-    jsonOk(res, home)
-    return
-  }
-
   // ── GET /v1/projects — every project (folder) Claude has run in ───────────────
   if (method === 'GET' && urlPath === '/v1/projects') {
     const projects = listProjects(PROJECTS_ROOT)
@@ -210,7 +279,7 @@ async function handle(req, res) {
   // ── POST /v1/project/select — switch the active project folder ────────────────
   if (method === 'POST' && urlPath === '/v1/project/select') {
     let body
-    try { body = await parseBody(req) } catch (e) { jsonErr(res, 'BAD_REQUEST', 'Invalid JSON: ' + e.message); return }
+    try { body = await parseBody(req) } catch (e) { bodyErr(res, e); return }
     const proj = listProjects(PROJECTS_ROOT).find((p) => p.slug === String(body.slug || ''))
     if (!proj) { jsonErr(res, 'NOT_FOUND', 'No such project under the projects root', 404); return }
     PROJECT_DIR = proj.dir
@@ -244,7 +313,7 @@ async function handle(req, res) {
   if (method === 'POST' && urlPath === '/v1/session/select') {
     if (!PROJECT_DIR) { jsonErr(res, 'NOT_CONFIGURED', 'WFLENS_SESSION_DIR is not set — no project dir to browse', 503); return }
     let body
-    try { body = await parseBody(req) } catch (e) { jsonErr(res, 'BAD_REQUEST', 'Invalid JSON: ' + e.message); return }
+    try { body = await parseBody(req) } catch (e) { bodyErr(res, e); return }
     const summary = summarizeSessionFile(PROJECT_DIR, body.id) // validates the uuid + existence
     if (!summary) { jsonErr(res, 'NOT_FOUND', 'No such session in this project', 404); return }
     SESS = join(PROJECT_DIR, summary.id)
@@ -326,7 +395,7 @@ async function handle(req, res) {
       if (!w) { jsonErr(res, 'NOT_FOUND', `Workflow "${id}" not found`, 404); return }
 
       let body
-      try { body = await parseBody(req) } catch (e) { jsonErr(res, 'BAD_REQUEST', e.message); return }
+      try { body = await parseBody(req) } catch (e) { bodyErr(res, e); return }
       const {
         edits = [],
         mode = 'live',
@@ -435,7 +504,7 @@ async function handle(req, res) {
   // ── POST /v1/runs ────────────────────────────────────────────────────────────
   if (method === 'POST' && urlPath === '/v1/runs') {
     let body
-    try { body = await parseBody(req) } catch (e) { jsonErr(res, 'BAD_REQUEST', e.message); return }
+    try { body = await parseBody(req) } catch (e) { bodyErr(res, e); return }
 
     const {
       workflowId,
@@ -597,7 +666,7 @@ async function handle(req, res) {
       if (!run.snapshot) { jsonErr(res, 'NOT_READY', 'Original run not finished', 409); return }
 
       let body
-      try { body = await parseBody(req) } catch (e) { jsonErr(res, 'BAD_REQUEST', e.message); return }
+      try { body = await parseBody(req) } catch (e) { bodyErr(res, e); return }
 
       // Build a new run body from the suggestion's proposedRunBody merged with the original run
       const proposed = body.proposedRunBody || {}
@@ -727,7 +796,7 @@ async function handle(req, res) {
   if (method === 'POST' && urlPath === '/v1/observe') {
     let body
     try { body = await parseBody(req) } catch (e) {
-      jsonErr(res, 'BAD_REQUEST', 'Invalid JSON: ' + e.message)
+      bodyErr(res, e)
       return
     }
     if (!body.ev) {
@@ -884,9 +953,10 @@ const server = http.createServer(async (req, res) => {
 // Ensure learnings dir exists
 mkdirSync(join(__dir, 'learnings'), { recursive: true })
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   const creds = probeCredentials(process.env)
-  console.log(`[control-tower] listening on http://localhost:${PORT}`)
+  const displayHost = HOST === '127.0.0.1' ? 'localhost' : HOST
+  console.log(`[control-tower] listening on http://${displayHost}:${PORT}`)
   console.log(`[control-tower] anthropic key: ${creds.anthropic ? 'SET' : 'UNSET (live runs disabled)'}`)
   console.log(`[control-tower] openrouter key: ${creds.openrouter ? 'SET' : 'UNSET'}`)
   console.log(`[control-tower] workflows: ${listWorkflows().length}, cassettes: ${listCassettes().length}`)

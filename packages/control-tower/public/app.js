@@ -147,17 +147,12 @@ function applyTheme(theme) {
 }
 
 els.btnTheme.addEventListener('click', () => {
-  const next = state.theme === 'dark' ? 'light' : 'dark';
-  applyTheme(next);
-  try { localStorage.setItem('ct-theme', next); } catch { /* private mode */ }
+  applyTheme(state.theme === 'dark' ? 'light' : 'dark');
 });
 
-// First load: explicit user choice (persisted) wins; else respect OS preference.
-{
-  let saved = null;
-  try { saved = localStorage.getItem('ct-theme'); } catch { /* private mode */ }
-  if (saved === 'light' || saved === 'dark') applyTheme(saved);
-  else if (window.matchMedia('(prefers-color-scheme: light)').matches) applyTheme('light');
+// Respect OS preference on first load
+if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+  applyTheme('light');
 }
 
 // ── Mode toggle ───────────────────────────────────────────────────────────────
@@ -216,14 +211,8 @@ async function apiFetch(path, opts = {}) {
   });
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
-    // Server errors are shaped {error:{code,message}} — never let an object reach
-    // Error() or the UI prints "[object Object]" (walker finding F-011-1).
-    try {
-      const j = await res.json();
-      const e = j.error;
-      detail = j.message || (e && typeof e === 'object' ? (e.message || e.code) : e) || detail;
-    } catch { /* non-JSON body */ }
-    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    try { const j = await res.json(); detail = j.message || j.error || detail; } catch {}
+    throw new Error(detail);
   }
   return res.json();
 }
@@ -1457,7 +1446,7 @@ function applyObservedFilters() {
 obsFilterEls.branch?.addEventListener('change', applyObservedFilters);
 obsFilterEls.dir?.addEventListener('change', applyObservedFilters);
 
-const TIER_COLORS = { haiku: '#3b8e6e', sonnet: '#9c6b2e', opus: '#a33', fable: '#8b5cf6' };
+const TIER_COLORS = { haiku: '#3b8e6e', sonnet: '#9c6b2e', opus: '#a33' };
 function tierColor(tier) { return TIER_COLORS[tier] || '#666'; }
 
 function statusClass(status) {
@@ -1516,11 +1505,6 @@ async function loadObservedList() {
     if (!runs.length) setWatchingHint('observed-empty-hint');
   } catch (err) {
     observedEls.list.innerHTML = `<p class="muted" style="padding:12px">Could not load observed runs: ${esc(err.message)}</p>`;
-  } finally {
-    // Render generation marker: navigateToRun must NOT act on rows from a previous
-    // render — expanding a stale row that this reload is about to wipe was walker
-    // finding F-064 (repeat navigation silently failed / flashed the wrong row).
-    if (observedEls.list) observedEls.list.dataset.renderGen = String((Number(observedEls.list.dataset.renderGen) || 0) + 1);
   }
 }
 
@@ -1677,7 +1661,7 @@ function buildTimelineSvg(calls) {
         const sw = Math.max(1, (f1 - f0) * bw);
         const segTools = esc((s.tools || []).join(', '));
         // data-seg-* feed the hover tooltip; data-seg-idx opens THAT step's detail.
-        return `<rect role="button" aria-label="${s.kind === 'tool' ? 'Tool execution' : 'Inference'} step ${si + 1} · ${fmtMs(s.endMs - s.startMs)} — click for detail" data-call-idx="${i}" data-seg-idx="${si}" data-seg-kind="${s.kind}" data-seg-dur="${(s.endMs - s.startMs).toFixed(0)}" data-seg-tools="${segTools}" data-seg-label="${esc(c.label || '')}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"></rect>`;
+        return `<rect data-call-idx="${i}" data-seg-idx="${si}" data-seg-kind="${s.kind}" data-seg-dur="${(s.endMs - s.startMs).toFixed(0)}" data-seg-tools="${segTools}" data-seg-label="${esc(c.label || '')}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"></rect>`;
       }).join('');
       // hairline frame so adjacent same-color runs still read as one bar (non-interactive)
       bar += `<rect x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="2" fill="none" stroke="var(--border)" stroke-width="0.5" style="pointer-events:none"></rect>`;
@@ -1737,18 +1721,13 @@ function renderCallDetailInto(slot, c) {
   const traceRows = segs.map((s, n) => {
     const isTool = s.kind === 'tool';
     const dot = isTool ? SEG_COLOR.tool : SEG_COLOR.inference;
-    // A tool step is the OUTPUT of the inference right above it — chain them visually:
-    // inference rows preview what they decided to run; tool rows indent under them.
-    const decided = !isTool && segs[n + 1] && segs[n + 1].kind === 'tool' && segs[n + 1].tools && segs[n + 1].tools.length
-      ? `<span class="trace-decided">→ ${esc(segs[n + 1].tools.join(', '))}</span>` : '';
     const name = isTool
       ? (s.tools && s.tools.length ? 'Tool · ' + esc(s.tools.join(', ')) : 'Tool execution')
       : 'Inference';
-    return `<div class="trace-row${isTool ? ' trace-row-tool' : ''}" data-trace-idx="${n}" title="Click to see exactly what this step did">`
+    return `<div class="trace-row" data-trace-idx="${n}" title="Click to see exactly what this step did">`
       + `<span class="mono" style="color:var(--gray-500);min-width:22px;text-align:right">${n + 1}</span>`
-      + (isTool ? '<span class="trace-connector">└</span>' : '')
       + `<span class="tl-tip-dot" style="background:${dot}"></span>`
-      + `<span style="color:var(--gray-1000);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}${decided}</span>`
+      + `<span style="color:var(--gray-1000);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>`
       + `<span class="mono" style="color:var(--gray-900)">${fmtMs(s.endMs - s.startMs)}</span></div>`;
   }).join('');
   const traceSection = segs.length
@@ -2204,7 +2183,6 @@ function renderSubagentDetail(detail) {
 document.getElementById('tab-subagents')?.addEventListener('click', (e) => {
   if (e.target.closest('[data-crumb-back]')) {
     const slot = subEls.slot(); if (slot) slot.hidden = true;
-    subSelectedId = null; if (subView !== 'table') renderSubView(); // clear the selection highlight
     subEls.wrap()?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     pushNav(null); // record "back at the list" so browser Back/Forward stays coherent
     return;
@@ -2213,9 +2191,6 @@ document.getElementById('tab-subagents')?.addEventListener('click', (e) => {
 });
 
 async function selectSubagent(agentId) {
-  // Keep the graph/tree highlight in sync with what the detail actually shows —
-  // a stale green "selected" node after moving on was walker finding F-035-1.
-  if (subSelectedId !== agentId) { subSelectedId = agentId; if (subView !== 'table') renderSubView(); }
   let detail = subCache.get(agentId);
   if (!detail) {
     try { const res = await fetch(`/v1/subagents/${encodeURIComponent(agentId)}`); if (!res.ok) throw new Error('HTTP ' + res.status); detail = await res.json(); }
@@ -2475,7 +2450,6 @@ function renderSessionNodes() {
       const glyph = folded ? '▸' : '▾';
       const badge = folded ? ' ' + node.children.length : '';
       fold = `<g class="sfold" data-fold="${esc(node.id)}">`
-        + `<title>${folded ? 'Expand' : 'Collapse'} in place (does not navigate away)</title>`
         + `<rect x="${px + BOX_W - 30}" y="${py}" width="30" height="${BOX_H}" fill="transparent"/>`
         + `<text x="${px + BOX_W - 26}" y="${py + 12}" style="font-size:9px;fill:var(--gray-700)">${glyph}${esc(badge)}</text></g>`;
     }
@@ -2596,9 +2570,9 @@ function siDur(ms) {
   if (s >= 60) return `${Math.round(s / 60)}m`;
   return `${Math.round(s)}s`;
 }
-const MODEL_ORDER = ['fable', 'opus', 'sonnet', 'haiku', 'other'];
-// Mirrors the server's tierFromModel — fable is its OWN tier ($10/$50, 2× opus).
-function modelTier(m) { m = String(m || '').toLowerCase(); return m.includes('fable') ? 'fable' : m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other'; }
+const MODEL_ORDER = ['opus', 'sonnet', 'haiku', 'other'];
+// Mirrors the server's tierFromModel: fable is priced/bucketed as opus tier.
+function modelTier(m) { m = String(m || '').toLowerCase(); return (m.includes('opus') || m.includes('fable')) ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other'; }
 function modelColor(tier) { return tier === 'other' ? '#8a8f98' : tierColor(tier); }
 // Per-item cost split by model: {opus: $, sonnet: $, ...}. Workflows need their fetched
 // telemetry.calls; subagents carry a single model. Returns null if a workflow's detail
@@ -2617,17 +2591,16 @@ function itemModelSplit(item, wfDetails) {
 // apples-to-apples with our cache-aware current cost. cacheWr isn't separately listed for
 // these models, so it's billed at the prompt rate (small vs cacheRd, and conservative).
 const SUBSTITUTE = {
-  fable: { name: 'GLM-5.2', or: 'z-ai/glm-5.2', prompt: 0.93, completion: 3.00, cacheRd: 0.18 },
   opus: { name: 'GLM-5.2', or: 'z-ai/glm-5.2', prompt: 0.93, completion: 3.00, cacheRd: 0.18 },
   sonnet: { name: 'DeepSeek V4 Flash', or: 'deepseek/deepseek-v4-flash', prompt: 0.098, completion: 0.196, cacheRd: 0.02 },
   haiku: { name: 'GLM-4.7 Flash', or: 'z-ai/glm-4.7-flash', prompt: 0.06, completion: 0.40, cacheRd: 0.01 },
 };
 const SUBSTITUTE_ASOF = '2026-07-01';
 // Anthropic list prices ($ per MILLION tokens) used for the current-cost estimate.
-// Mirrors workflow-lens/src/shim.mjs PRICE; verified 2026-07-01 against the LiteLLM
-// price DB + ccusage (fable-5 $10/$50 incl.). Cache-read = in × 0.10; cache-WRITE is
-// priced by TTL bucket server-side: 5-minute ×1.25, 1-hour ×2.0.
-const ANTHROPIC_PRICE = { fable: { in: 10, out: 50 }, opus: { in: 5, out: 25 }, sonnet: { in: 3, out: 15 }, haiku: { in: 1, out: 5 } };
+// Mirrors workflow-lens/src/shim.mjs PRICE; verified 2026-07-01 against OpenRouter's
+// Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5 (in/out and cache read/write all match).
+// cache-write = in × 1.25, cache-read = in × 0.10 (matches real Anthropic cache pricing).
+const ANTHROPIC_PRICE = { opus: { in: 5, out: 25 }, sonnet: { in: 3, out: 15 }, haiku: { in: 1, out: 5 } };
 // Aggregate real token usage per tier (input/output/cache) across workflow calls + direct
 // subagents — needed to re-price under a substitute model. Skips workflows without loaded detail.
 function sessionTierUsage(workflows, sub, wfDetails) {
@@ -2662,7 +2635,7 @@ function tierGenSpeed(usage, tier) {
 function computeSavings(workflows, sub, wfDetails) {
   const usage = sessionTierUsage(workflows, sub, wfDetails);
   const lines = []; let cur = 0, alt = 0;
-  for (const tier of ['fable', 'opus', 'sonnet', 'haiku']) {
+  for (const tier of ['opus', 'sonnet', 'haiku']) {
     const u = usage[tier], s = SUBSTITUTE[tier];
     if (!u || !s || !u.cost) continue;
     const cacheRdRate = s.cacheRd != null ? s.cacheRd : s.prompt;
@@ -2672,6 +2645,128 @@ function computeSavings(workflows, sub, wfDetails) {
   }
   if (!lines.length) return null;
   return { lines, cur, alt, save: cur - alt, pct: cur > 0 ? Math.round((cur - alt) / cur * 100) : 0 };
+}
+
+function itemMs(item) {
+  return Math.max(0, (item.endMs || 0) - (item.startMs || 0));
+}
+function workflowCalls(workflows, wfDetails) {
+  if (!(wfDetails instanceof Map)) return [];
+  const out = [];
+  for (const w of (workflows || [])) {
+    const calls = wfDetails.get(w.runId)?.telemetry?.calls || [];
+    out.push(...calls.map((c) => ({ ...c, workflowName: w.name || w.runId, workflowRunId: w.runId })));
+  }
+  return out;
+}
+function sessionEvidence(workflows, sub, wfDetails) {
+  const tools = new Set();
+  let toolCalls = 0;
+  const addTools = (names) => { for (const n of (names || [])) if (n) tools.add(n); };
+  const main = sub && sub.root;
+  if (main) {
+    toolCalls += main.toolCalls || 0;
+    addTools(main.tools);
+  }
+  for (const n of allSubNodes(sub && sub.root)) {
+    toolCalls += n.toolCalls || 0;
+    addTools(n.tools);
+  }
+  for (const c of workflowCalls(workflows, wfDetails)) {
+    toolCalls += c.toolCalls || 0;
+    addTools(c.tools);
+  }
+  const evidenceTools = ['Read', 'Bash', 'Glob', 'Grep', 'LS', 'Agent', 'Task', 'Edit', 'Write']
+    .filter((t) => tools.has(t));
+  return { tools: [...tools].sort(), evidenceTools, toolCalls };
+}
+function sessionSpeed(workflows, sub, wfDetails, items) {
+  const calls = workflowCalls(workflows, wfDetails);
+  const inferenceMs = calls.reduce((s, c) => s + (c.inferenceMs || 0), 0);
+  const toolMs = calls.reduce((s, c) => s + (c.toolMs || 0), 0);
+  const timedMs = inferenceMs + toolMs;
+  const byDuration = [...items].sort((a, b) => itemMs(b) - itemMs(a));
+  const longest = byDuration[0] || null;
+  const childItems = items.filter((i) => i.kind !== 'main');
+  const childSpan = childItems.length
+    ? Math.max(...childItems.map((i) => i.endMs || 0)) - Math.min(...childItems.map((i) => i.startMs || 0))
+    : 0;
+  return { calls, inferenceMs, toolMs, timedMs, longest, childSpan };
+}
+function reviewPill(text, tone = '') {
+  return `<span class="si-review-pill${tone ? ' ' + tone : ''}">${esc(text)}</span>`;
+}
+function reviewItem(question, status, body, detail, tone) {
+  return `<div class="si-review-item">`
+    + `<div class="si-review-q">${esc(question)}</div>`
+    + `<div>${reviewPill(status, tone)}</div>`
+    + `<div class="si-review-body">${body}</div>`
+    + (detail ? `<div class="si-review-detail">${detail}</div>` : '')
+    + `</div>`;
+}
+function renderRunReview(workflows, sub, wfDetails, ctx) {
+  const { items, total, pct, mainCost, wfCost, subCost, ranked, savings, failedDetails } = ctx;
+  const evidence = sessionEvidence(workflows, sub, wfDetails);
+  const speed = sessionSpeed(workflows, sub, wfDetails, items);
+  const topSpend = ranked[0];
+
+  const trustStatus = evidence.toolCalls > 0
+    ? (evidence.evidenceTools.length ? 'Evidence trail captured' : 'Tool activity captured')
+    : 'Low evidence signal';
+  const trustTone = evidence.toolCalls > 0 ? 'good' : 'warn';
+  const trustTools = evidence.evidenceTools.length
+    ? evidence.evidenceTools.slice(0, 5).join(', ')
+    : (evidence.tools.slice(0, 5).join(', ') || 'none');
+  const trustBody = evidence.toolCalls > 0
+    ? `The transcript shows <strong>${fmtN(evidence.toolCalls)}</strong> tool calls${trustTools !== 'none' ? ` across <span class="mono">${esc(trustTools)}</span>` : ''}.`
+    : 'The captured transcript is mostly model inference, so the dashboard cannot show much external evidence.';
+  const trustDetail = evidence.toolCalls > 0
+    ? 'Use this as an audit trail, not a correctness proof: open the main conversation, workflow, or subagent trace to inspect the exact files, commands, and outputs.'
+    : 'A stronger trust signal would include file reads, searches, test runs, or other transcript-visible evidence.';
+
+  const moneyStatus = topSpend && total > 0 && pct(topSpend.cost) >= 50 ? 'Spend concentrated' : 'Spend distributed';
+  const moneyTone = topSpend && total > 0 && pct(topSpend.cost) >= 50 ? 'warn' : 'good';
+  const moneyBits = [];
+  if (topSpend) moneyBits.push(`<strong>${esc(truncTxt(topSpend.label, 34))}</strong> accounts for <strong>${pct(topSpend.cost)}%</strong> (${fmtUsdShort(topSpend.cost)}).`);
+  if (mainCost > 0) moneyBits.push(`Main chat: ${fmtUsdShort(mainCost)}.`);
+  if (wfCost > 0) moneyBits.push(`Workflows: ${fmtUsdShort(wfCost)}.`);
+  if (subCost > 0) moneyBits.push(`Subagents: ${fmtUsdShort(subCost)}.`);
+  const moneyDetail = savings
+    ? `Potential model-swap ceiling: save ${fmtUsdShort(savings.save)} on the re-priceable Claude-tier spend${failedDetails ? ' (partial)' : ''}.`
+    : '$ values are cache-aware estimates reconstructed from transcript token counts, not billing records.';
+
+  let speedStatus = 'Timing available';
+  let speedTone = 'good';
+  let speedBody = 'The session has enough timestamps to show where elapsed time accumulated.';
+  const speedDetails = [];
+  if (speed.longest) {
+    const dur = itemMs(speed.longest);
+    speedBody = `The longest visible span is <strong>${esc(truncTxt(speed.longest.label, 34))}</strong> at <strong>${fmtMs(dur)}</strong>.`;
+    if (speed.longest.kind === 'main') {
+      speedStatus = 'Chat span dominates';
+      speedTone = 'warn';
+      if (speed.childSpan > 0) speedDetails.push(`Launched work spans about ${fmtMs(speed.childSpan)}; the rest is the main conversation timeline.`);
+    }
+  }
+  if (speed.timedMs > 0) {
+    const infPct = Math.round(speed.inferenceMs / speed.timedMs * 100);
+    const toolPct = 100 - infPct;
+    speedDetails.push(`Measured workflow time splits ${infPct}% model inference / ${toolPct}% tool execution.`);
+    if (infPct >= 70) { speedStatus = 'Model-bound'; speedTone = 'warn'; }
+    else if (toolPct >= 70) { speedStatus = 'Tool-bound'; speedTone = 'warn'; }
+  } else if (wfDetails instanceof Map) {
+    speedDetails.push('Workflow timing detail is sparse; inspect the main or subagent trace for turn-level timing.');
+  } else {
+    speedDetails.push('Workflow details are still loading, so the speed readout will sharpen shortly.');
+  }
+
+  return `<div class="si-review">`
+    + `<div class="si-lb-title">Run review <span class="si-legend muted">trust · money · speed</span></div>`
+    + `<div class="si-review-grid">`
+    + reviewItem('Can I trust this result?', trustStatus, trustBody, trustDetail, trustTone)
+    + reviewItem('Where did my money go?', moneyStatus, moneyBits.join(' '), moneyDetail, moneyTone)
+    + reviewItem('Why was it slow?', speedStatus, speedBody, speedDetails.join(' '), speedTone)
+    + `</div></div>`;
 }
 function renderSessionInsight(workflows, sub, wfDetails) {
   const host = document.getElementById('session-insight'); if (!host) return;
@@ -2766,6 +2861,7 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   const chip = (label, val, sub2, cls) => `<div class="si-chip${cls ? ' ' + cls : ''}"><div class="si-chip-k">${label}</div><div class="si-chip-v">${val}</div>${sub2 ? `<div class="si-chip-s">${sub2}</div>` : ''}</div>`;
   const biggest = ranked[0];
   const savings = computeSavings(workflows, sub, wfDetails);
+  const review = renderRunReview(workflows, sub, wfDetails, { items, total, pct, mainCost, wfCost, subCost, ranked, savings, failedDetails });
   let chips = '';
   if (mainCost > 0) chips += chip('Main conversation', fmtUsdShort(mainCost), `${pct(mainCost)}% of spend`);
   if (wfCount) chips += chip('Workflows', fmtUsdShort(wfCost), `${pct(wfCost)}% of spend`);
@@ -2799,13 +2895,13 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   // "*" methodology section — where every number comes from, and the idea behind it.
   let method = '';
   if (savings) {
-    const curList = savings.lines.map((l) => { const p = ANTHROPIC_PRICE[l.tier]; return `<li><strong>${l.tier}</strong>: $${p.in}/M in · $${p.out}/M out · $${(p.in * 1.25).toFixed(2)}/M cache-write (in×1.25 for 5-min cache, ×2.0 for 1-hour) · $${(p.in * 0.10).toFixed(2)}/M cache-read (in×0.10)</li>`; }).join('');
+    const curList = savings.lines.map((l) => { const p = ANTHROPIC_PRICE[l.tier]; return `<li><strong>${l.tier}</strong>: $${p.in}/M in · $${p.out}/M out · $${(p.in * 1.25).toFixed(2)}/M cache-write (in×1.25) · $${(p.in * 0.10).toFixed(2)}/M cache-read (in×0.10)</li>`; }).join('');
     const subList = savings.lines.map((l) => { const s = l.sub; return `<li><strong>${l.tier}</strong> → ${esc(s.name)} (<code>${esc(s.or)}</code>): $${s.prompt}/M in · $${s.completion}/M out · $${s.cacheRd}/M cache-read · cache-write at in rate</li>`; }).join('');
     method = `<details class="si-method" id="si-method">`
       + `<summary>* How “potential savings” is calculated &amp; where the prices come from</summary>`
       + `<div class="si-method-body">`
       + `<p><strong>Your current cost</strong> is reconstructed from the real token counts in each run's transcript (input, output, cache-write, cache-read), priced <em>per token</em> at Anthropic's published rates, cache-aware:</p>`
-      + `<p class="si-method-formula"><code>cost = input×in + cache_write_5m×in×1.25 + cache_write_1h×in×2.0 + cache_read×in×0.10 + output×out</code></p>`
+      + `<p class="si-method-formula"><code>cost = input×in + cache_write×in×1.25 + cache_read×in×0.10 + output×out</code></p>`
       + `<p><strong>Current model prices</strong> (Anthropic list, $ per million tokens — verified against OpenRouter ${SUBSTITUTE_ASOF}, matching Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5):</p><ul class="si-method-list">${curList}</ul>`
       + `<p>It's an estimate reconstructed from token counts, not a billed invoice.</p>`
       + `<p><strong>The substitute cost</strong> re-prices those <em>same</em> token counts at an open model's <strong>OpenRouter list price</strong> (captured ${SUBSTITUTE_ASOF}), the identical cache-aware way — (input + cache-write) at the prompt rate, cache-read at the model's cached-input rate, output at the completion rate. Because most agent tokens are cache reads (re-sent context), a model's <em>cached-input</em> price — not its headline price — usually decides the comparison.</p>`
@@ -2816,6 +2912,7 @@ function renderSessionInsight(workflows, sub, wfDetails) {
 
   host.innerHTML = `<div class="session-insight-card">`
     + `<div class="si-headline">${headline}</div>`
+    + review
     + `<div class="si-chips">${chips}</div>`
     + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${speedLine}${rows}${more}</div>`
     + savePanel
@@ -2896,31 +2993,22 @@ function buildSessionWaterfallSvg(workflows, sub) {
 
 // Navigate from the waterfall to an item's own tab + open it.
 async function navigateToRun(runId) {
-  // Snapshot the render generation BEFORE switching tabs: setTab('observe') always
-  // reloads the list, and acting on a row from the outgoing render gets wiped.
-  const genBefore = observedEls.list?.dataset.renderGen || '0';
-  setTab("observe");
+  document.querySelector('.tabbar-btn[data-tab="observe"]')?.click();
   const sel = (window.CSS && CSS.escape) ? CSS.escape(runId) : runId;
-  // Poll until loadObservedList has rendered the row. A COLD server scan of a big
-  // session can take well over 2s — the old 2s window expired silently and the jump
-  // landed on an unexpanded list with no cue (walker finding F-019-1). 15s window +
-  // a flash on arrival so it's obvious WHICH run was jumped to (names repeat).
-  for (let i = 0; i < 150; i++) {
-    const fresh = (observedEls.list?.dataset.renderGen || '0') !== genBefore;
-    const item = fresh ? observedEls.list?.querySelector(`.obs-run-item[data-run-id="${sel}"]`) : null;
+  // Poll until loadObservedList has rendered the row (localhost fetch is fast, but async).
+  for (let i = 0; i < 25; i++) {
+    const item = observedEls.list?.querySelector(`.obs-run-item[data-run-id="${sel}"]`);
     if (item) {
       const row = item.querySelector('.obs-run-row');
       if (row && row.getAttribute('aria-expanded') !== 'true') toggleItem(item);
-      row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      row?.classList.add('obs-row-flash');
-      setTimeout(() => row?.classList.remove('obs-row-flash'), 2400);
+      item.querySelector('.obs-run-row')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 80));
   }
 }
 async function navigateToSubagent(agentId) {
-  setTab("subagents");
+  document.querySelector('.tabbar-btn[data-tab="subagents"]')?.click();
   await new Promise((r) => setTimeout(r, 320));
   selectSubagent(agentId);
 }
@@ -3025,74 +3113,27 @@ let showEmptySessions = false;
 
 async function loadSessionsBrowser() {
   const list = document.getElementById('sessions-list'); if (!list) return;
-  // The picker must exist in the DOM even when projectsData is already cached
-  // (e.g. arriving here from the Home dashboard, which fetched the folder list).
-  if (!projectsData || !document.getElementById('project-picker')) await loadProjectsPicker();
+  if (!projectsData) await loadProjectsPicker();
   await loadSessionsList();
 }
-// Group the folder picker so 200 near-identical worktree paths become scannable:
-// conductor worktrees group under their repo ("agent-university — conductor worktrees"),
-// everything else groups under its parent dir. Groups sort by recency; a filter box
-// narrows the list as you type.
-function projectGroupKey(p) {
-  const cwd = p.cwd || p.slug;
-  const m = String(cwd).match(/^(.*\/conductor\/workspaces\/([^/]+))\/[^/]+$/);
-  if (m) return { key: m[1], label: `${m[2]} — conductor worktrees` };
-  const parent = String(cwd).replace(/\/[^/]+\/?$/, '') || cwd;
-  return { key: parent, label: homeAbbrev(parent) + '/' };
-}
-// Human label for a folder: conductor worktrees read as "repo · worktree" (the full
-// path is useless noise); everything else reads as its directory name.
-function repoLabel(cwd) {
-  const s = String(cwd || '');
-  const m = s.match(/\/conductor\/workspaces\/([^/]+)\/([^/]+)\/?$/);
-  if (m) return { repo: m[1], wt: m[2], text: `${m[1]} · ${m[2]}` };
-  const name = s.split('/').filter(Boolean).pop() || s;
-  return { repo: name, wt: null, text: name };
-}
-function renderProjectPickerOptions(filter = '') {
-  const sel = document.getElementById('project-picker'); if (!sel || !projectsData) return;
-  const active = projectsData.activeProjectSlug;
-  const f = filter.trim().toLowerCase();
-  const groups = new Map();
-  for (const p of projectsData.projects) {
-    if (f && !String(p.cwd || p.slug).toLowerCase().includes(f)) continue;
-    const g = projectGroupKey(p);
-    if (!groups.has(g.key)) groups.set(g.key, { label: g.label, items: [], last: 0 });
-    const grp = groups.get(g.key);
-    grp.items.push(p); grp.last = Math.max(grp.last, p.lastActivityMs || 0);
-  }
-  const ordered = [...groups.values()].sort((a, b) => b.last - a.last);
-  let html = '';
-  for (const g of ordered) {
-    g.items.sort((a, b) => (b.lastActivityMs || 0) - (a.lastActivityMs || 0));
-    const opts = g.items.map((p) => {
-      const name = String(p.cwd || p.slug).split('/').pop();
-      return `<option value="${esc(p.slug)}"${p.slug === active ? ' selected' : ''}>${esc(name)} · ${p.sessionCount} session${p.sessionCount === 1 ? '' : 's'}</option>`;
-    }).join('');
-    html += g.items.length > 1 ? `<optgroup label="${esc(g.label)}">${opts}</optgroup>` : opts;
-  }
-  sel.innerHTML = html || '<option value="" disabled>No folders match</option>';
-}
 async function loadProjectsPicker() {
-  if (!projectsData) {
-    try { projectsData = await apiFetch('/v1/projects'); } catch { projectsData = null; return; }
-  }
+  try { projectsData = await apiFetch('/v1/projects'); } catch { projectsData = null; return; }
   const host = document.getElementById('sessions-context'); if (!host) return;
+  const active = projectsData.activeProjectSlug;
+  const opts = projectsData.projects.map((p) => {
+    const label = `${homeAbbrev(p.cwd || p.slug)}  ·  ${p.sessionCount} session${p.sessionCount === 1 ? '' : 's'}`;
+    return `<option value="${esc(p.slug)}"${p.slug === active ? ' selected' : ''}>${esc(label)}</option>`;
+  }).join('');
   host.innerHTML = `<div class="sess-projectbar">`
-    + `<label class="sess-projectlabel" for="project-picker">Folder</label>`
-    + `<input id="project-filter" class="input sess-project-filter" type="search" placeholder="filter folders…" aria-label="Filter folders">`
-    + `<select id="project-picker" class="input sess-project-select" title="Every folder you've run Claude Code in — grouped by repo, most recent first.">${''}</select>`
-    + `<span class="muted" style="font-size:11px">${projectsData.projects.length} folders</span></div>`;
-  renderProjectPickerOptions();
-  document.getElementById('project-filter')?.addEventListener('input', (e) => renderProjectPickerOptions(e.target.value));
+    + `<label class="sess-projectlabel" for="project-picker">Project folder</label>`
+    + `<select id="project-picker" class="input sess-project-select" title="Every folder you've run Claude Code in. Pick one to browse its sessions.">${opts}</select>`
+    + `<span class="muted" style="font-size:11px">${projectsData.projects.length} folders known to Claude Code</span></div>`;
   document.getElementById('project-picker')?.addEventListener('change', async (e) => {
-    const slug = e.target.value; if (!slug) return;
+    const slug = e.target.value;
     try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); }
     catch (err) { alert('Could not switch project: ' + err.message); return; }
     resetSessionCaches();
     projectsData.activeProjectSlug = slug;
-    renderNav();
     await loadSessionsList();
   });
 }
@@ -3114,10 +3155,7 @@ function sessDayLabel(ms) {
 }
 function sessClock(ms) { return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }); }
 function renderSessionsList() {
-  const list = document.getElementById('sessions-list'); if (!list) return;
-  // Never silently no-op with a stale DOM: if the data was cleared (session switch,
-  // project switch) re-fetch instead — a visible-but-dead toggle was walker F-STORY-004-1.
-  if (!sessionsData) { loadSessionsList(); return; }
+  const list = document.getElementById('sessions-list'); if (!list || !sessionsData) return;
   const all = sessionsData.sessions || [];
   const activeId = sessionsData.activeSessionId;
   if (!all.length) { list.innerHTML = ctEmptyHtml('No sessions in this folder yet', 'Run Claude Code in this project and its sessions will appear here.', ''); return; }
@@ -3133,12 +3171,7 @@ function renderSessionsList() {
     const g = groups.get(label); g.items.push({ ...s, _ms: ms }); g.ms = Math.max(g.ms, ms);
   }
   const ordered = [...groups.entries()].sort((a, b) => b[1].ms - a[1].ms);
-  // Folder rollup: total conversation spend across the loaded sessions (honest bound).
-  const totCost = all.reduce((a, b) => a + (b.costUsd || 0), 0);
-  const liveN = all.filter((s) => (Date.now() - (s.mtimeMs || 0)) < 120000).length;
-  let html = `<div class="folder-rollup"><span class="folder-rollup-cost mono">${fmtUsdShort(totCost)}</span>`
-    + `<span class="muted"> across ${all.length}${sessionsData.totalSessions > all.length ? ` of ${sessionsData.totalSessions}` : ''} session${all.length === 1 ? '' : 's'} (conversation cost, est.)</span>`
-    + (liveN ? `<span class="sess-live-pill" style="margin-left:10px">${liveN} live</span>` : '') + `</div>`;
+  let html = '';
   for (const [label, g] of ordered) {
     g.items.sort((a, b) => b._ms - a._ms);
     const dayCost = g.items.reduce((a, b) => a + (b.costUsd || 0), 0);
@@ -3148,7 +3181,7 @@ function renderSessionsList() {
       const badges = []
       if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
       if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
-      const activePill = s.id === activeId ? '<span class="sess-active-pill" title="This is the session the Active Session / Workflows / Subagents tabs are currently showing">active</span>' : '';
+      const activePill = s.id === activeId ? '<span class="sess-active-pill">active</span>' : '';
       const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
       const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
       html += `<button class="sess-row${ghost}" type="button" data-session-id="${esc(s.id)}" title="${esc(s.id)}${s.cwd ? ' · ' + esc(s.cwd) : ''}">`
@@ -3163,10 +3196,7 @@ function renderSessionsList() {
     html += '</div>';
   }
   if (hiddenCount > 0 || showEmptySessions) {
-    const shownEmpties = all.filter(isEmpty).length;
-    html += `<button class="sess-empty-toggle" type="button" id="sess-empty-toggle" aria-pressed="${showEmptySessions}">`
-      + (showEmptySessions ? `Hide the ${shownEmpties} empty session${shownEmpties === 1 ? '' : 's'}` : `Show ${hiddenCount} empty session${hiddenCount === 1 ? '' : 's'} (no turns, no cost)`)
-      + `</button>`;
+    html += `<button class="sess-empty-toggle" type="button" id="sess-empty-toggle">${showEmptySessions ? 'Hide' : `Show`} ${hiddenCount || ''} empty session${hiddenCount === 1 ? '' : 's'}${showEmptySessions ? '' : ' (no turns, no cost)'}</button>`;
   }
   if (sessionsData.totalSessions > all.length) html += `<div class="muted" style="font-size:11px;padding:6px 4px">Showing the ${all.length} most recent of ${sessionsData.totalSessions} sessions.</div>`;
   list.innerHTML = html;
@@ -3202,9 +3232,7 @@ let currentTab = 'sessions';
 let currentSessionId = null;
 let navApplying = false; // true while restoring from popstate/deep-link (don't re-push)
 function navHash(sub = null) {
-  // Session id belongs only in session-scoped hashes (#/home stays clean).
-  const withSession = SESSION_SCOPE_TABS.includes(currentTab) && currentSessionId;
-  return '#/' + currentTab + (withSession ? '/' + currentSessionId : '') + (sub ? '/' + sub : '');
+  return '#/' + currentTab + (currentSessionId ? '/' + currentSessionId : '') + (sub ? '/' + sub : '');
 }
 function pushNav(sub = null) {
   if (navApplying) return;
@@ -3248,8 +3276,6 @@ async function refreshSessionStrip() {
   try { data = await apiFetch('/v1/session/active'); } catch { /* server unreachable — leave as-is */ }
   if (data && data.sessionId) currentSessionId = data.sessionId;
   const s = data && data.session;
-  stripTitleCache = s ? (s.title || s.id) : null;
-  renderNav(); // session crumb shows the title once known
   if (!s) {
     strip.innerHTML = `<span class="sess-strip-label">No session selected</span>`
       + `<span class="sess-strip-title muted">pick one from the Sessions tab</span>`
@@ -3271,10 +3297,8 @@ document.getElementById('active-session-strip')?.addEventListener('click', (e) =
   if (e.target.closest('[data-goto-sessions]')) setTab('sessions');
 });
 
-const SESSION_SCOPE_TABS = ['session', 'observe', 'subagents'];
 function setTab(tab) {
-  const panels = { control: 'tab-control', home: 'tab-home', sessions: 'tab-sessions', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
-  if (!panels[tab]) tab = 'home';
+  const panels = { control: 'tab-control', sessions: 'tab-sessions', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
   for (const [t, id] of Object.entries(panels)) { const el = document.getElementById(id); if (el) el.hidden = (t !== tab); }
   // The run-controls chrome belongs to the Control tab only.
   const isControl = tab === 'control';
@@ -3282,132 +3306,29 @@ function setTab(tab) {
   hide('.control-bar');
   hide('#workflow-picker');
   hide('.seg-control');
+  document.querySelectorAll('.tabbar-btn').forEach((b) => {
+    const sel = b.dataset.tab === tab;
+    b.setAttribute('aria-selected', sel ? 'true' : 'false');
+    b.classList.toggle('active', sel);
+  });
   currentTab = tab;
-  renderNav();
   pushNav(); // history entry per tab move (no-op while restoring from popstate)
-  // Identity strip: visible in session scope, hidden on Home and the folder list.
+  // Identity strip: visible on every drill-in tab, hidden on the Sessions list itself.
   const strip = document.getElementById('active-session-strip');
-  if (strip) { strip.hidden = !SESSION_SCOPE_TABS.includes(tab); if (!strip.hidden) refreshSessionStrip(); }
-  if (tab === 'home') loadHome();
+  if (strip) { strip.hidden = !['session', 'observe', 'subagents'].includes(tab); if (!strip.hidden) refreshSessionStrip(); }
   if (tab === 'sessions') loadSessionsBrowser();
   if (tab === 'session') loadSessionWaterfall();
   if (tab === 'observe') loadObservedList();
   if (tab === 'subagents') loadSubagentTree();
 }
-
-// ── Breadcrumb + session sub-tabs ─────────────────────────────────────────────
-// ⌂ All folders / <folder> / “<session title>” — each level clickable; the session
-// level carries sub-tabs [Overview | Workflows | Subagents].
-let stripTitleCache = null; // set by refreshSessionStrip for the session crumb
-function renderNav() {
-  const host = document.getElementById('nav-crumbs'); if (!host) return;
-  const inSession = SESSION_SCOPE_TABS.includes(currentTab);
-  const folderLabel = (() => {
-    const p = projectsData && projectsData.projects && projectsData.projects.find((x) => x.slug === projectsData.activeProjectSlug);
-    return p ? homeAbbrev(p.cwd || p.slug) : null;
-  })();
-  let html = `<button class="crumb${currentTab === 'home' ? ' crumb-here' : ''}" type="button" data-nav-tab="home" title="All folders on this machine">⌂ All folders</button>`;
-  if (currentTab !== 'home') {
-    html += `<span class="crumb-sep">/</span>`
-      + `<button class="crumb${currentTab === 'sessions' ? ' crumb-here' : ''}" type="button" data-nav-tab="sessions" title="This folder's sessions">${esc(folderLabel || 'Folder')}</button>`;
-  }
-  if (inSession) {
-    const t = stripTitleCache ? truncTxt(stripTitleCache, 44) : 'Session';
-    html += `<span class="crumb-sep">/</span><span class="crumb crumb-here" title="${esc(stripTitleCache || '')}">“${esc(t)}”</span>`;
-  }
-  host.innerHTML = html;
-  const subtabs = document.getElementById('session-subtabs');
-  if (subtabs) {
-    subtabs.hidden = !inSession;
-    subtabs.querySelectorAll('.subtab-btn').forEach((b) => {
-      const sel = b.dataset.tab === currentTab;
-      b.setAttribute('aria-selected', sel ? 'true' : 'false');
-      b.classList.toggle('active', sel);
-    });
-  }
-}
-document.getElementById('nav-crumbs')?.addEventListener('click', (e) => {
-  const c = e.target.closest('[data-nav-tab]'); if (c) setTab(c.getAttribute('data-nav-tab'));
-});
-
-// ── Home dashboard: everything Claude Code has done on this machine ───────────
-async function loadHome() {
-  const body = document.getElementById('home-body'); if (!body) return;
-  let home;
-  try { home = await apiFetch('/v1/home'); } catch (err) { body.innerHTML = `<p class="muted" style="padding:12px">Could not load: ${esc(err.message)}</p>`; return; }
-  if (!projectsData) projectsData = { projects: home.projects, activeProjectSlug: home.activeProjectSlug };
-  const row = (s) => {
-    const badges = [];
-    if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
-    if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
-    const live = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — appears to be running now">live</span>' : '';
-    return `<button class="sess-row home-sess-row" type="button" data-home-session="${esc(s.id)}" data-home-project="${esc(s.projectSlug)}" title="${esc(s.projectCwd || s.projectSlug)}">`
-      + `<span class="sess-time mono">${s.mtimeMs ? sessDayLabel(s.mtimeMs) + ' ' + sessClock(s.mtimeMs) : '—'}</span>`
-      + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 80))}${live}</span>`
-      + `<span class="sess-badges">${badges.join('')}</span>`
-      + `<span class="home-folder mono muted">${esc(truncTxt(repoLabel(s.projectCwd || s.projectSlug).text, 30))}</span>`
-      + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — conversation cost (estimate)">${fmtUsdShort(s.costUsd)}</span>`
-      + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
-  };
-  // GIT-REPO grouping: conductor worktrees of the same repo merge into ONE card
-  // (a card per worktree made this view useless). Click → newest worktree's folder.
-  const repoCards = new Map();
-  for (const f of (home.folderTotals || [])) {
-    const r = repoLabel(f.cwd || f.slug);
-    const key = r.wt ? `repo:${r.repo}` : `dir:${f.cwd || f.slug}`;
-    if (!repoCards.has(key)) repoCards.set(key, { repo: r.repo, wts: 0, sessions: 0, costUsd: 0, coverage: 0, last: 0, slug: f.slug, cwds: [] });
-    const c = repoCards.get(key);
-    c.wts += r.wt ? 1 : 0; c.sessions += f.sessions; c.costUsd += f.costUsd; c.coverage += f.coverage;
-    c.cwds.push(f.cwd || f.slug);
-    if ((f.lastActivityMs || 0) > c.last) { c.last = f.lastActivityMs || 0; c.slug = f.slug; }
-  }
-  const folders = [...repoCards.values()].sort((a, b) => b.last - a.last).map((c) => `<button class="home-folder-card" type="button" data-home-folder="${esc(c.slug)}" data-home-repo="${esc(c.repo)}" title="${esc(c.cwds.join('\n'))}">`
-    + `<span class="hf-name">${esc(truncTxt(c.repo, 34))}</span>`
-    + `<span class="hf-meta mono">${c.wts > 1 ? `${c.wts} worktrees · ` : ''}${c.sessions} session${c.sessions === 1 ? '' : 's'}</span>`
-    + `<span class="hf-cost mono" title="Spend across the ${c.coverage} most recent session${c.coverage === 1 ? '' : 's'} of ${c.wts > 1 ? 'these worktrees' : 'this folder'} (estimate)">${fmtUsdShort(c.costUsd)}<span class="hf-cov">/${c.coverage} recent</span></span></button>`).join('');
-  const moreFolders = home.projects.length - (home.folderTotals || []).length;
-  const liveBlock = home.live && home.live.length
-    ? `<div class="home-sect">Running now</div>${home.live.map(row).join('')}` : '';
-  body.innerHTML = liveBlock
-    + `<div class="home-sect">Recent sessions — all folders</div>${(home.recents || []).map(row).join('') || '<p class="muted" style="padding:8px;font-size:12px">Nothing yet.</p>'}`
-    + `<div class="home-sect">Most active folders</div><div class="home-folders">${folders}</div>`
-    + (moreFolders > 0 ? `<button class="sess-empty-toggle" type="button" data-home-allfolders>Browse all ${home.projects.length} folders…</button>` : '');
-}
-document.getElementById('home-body')?.addEventListener('click', async (e) => {
-  const sess = e.target.closest('[data-home-session]');
-  if (sess) {
-    const slug = sess.getAttribute('data-home-project');
-    if (projectsData && projectsData.activeProjectSlug !== slug) {
-      try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); } catch (err) { alert('Could not switch folder: ' + err.message); return; }
-      if (projectsData) projectsData.activeProjectSlug = slug;
-      resetSessionCaches();
-    }
-    selectSession(sess.getAttribute('data-home-session'));
-    return;
-  }
-  const folder = e.target.closest('[data-home-folder]');
-  if (folder) {
-    const slug = folder.getAttribute('data-home-folder');
-    const repo = folder.getAttribute('data-home-repo');
-    try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); } catch (err) { alert('Could not switch folder: ' + err.message); return; }
-    resetSessionCaches();
-    if (projectsData) projectsData.activeProjectSlug = slug;
-    setTab('sessions');
-    // Pre-filter the folder picker to this repo so its worktrees are one scan away.
-    if (repo) setTimeout(() => { const f = document.getElementById('project-filter'); if (f) { f.value = repo; f.dispatchEvent(new Event('input', { bubbles: true })); } }, 700);
-    return;
-  }
-  if (e.target.closest('[data-home-allfolders]')) setTab('sessions');
-});
-document.getElementById('home-refresh')?.addEventListener('click', () => loadHome());
-document.querySelectorAll('.tabbar-btn, .subtab-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+document.querySelectorAll('.tabbar-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
 init();
 // Deep-link support: #/tab/sessionId/agentId restores the exact spot; else land on Sessions.
 {
   const st = parseNavHash(location.hash);
   if (st) { applyNavState(st).then(() => history.replaceState(st, '', location.hash)); }
-  else { navApplying = true; setTab('home'); navApplying = false; history.replaceState({ tab: 'home', sessionId: null, sub: null }, '', '#/home'); }
+  else { navApplying = true; setTab('sessions'); navApplying = false; history.replaceState({ tab: 'sessions', sessionId: null, sub: null }, '', '#/sessions'); }
 }
 
 // Debug/QA handle (module scope hides everything otherwise). Read-only-ish: used by

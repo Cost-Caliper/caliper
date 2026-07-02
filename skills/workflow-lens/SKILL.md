@@ -1,8 +1,9 @@
 ---
 name: workflow-lens
-description: Use when the user wants to visualize, instrument, analyze, budget, replay, or estimate the cost of Claude Code Workflow runs — the single-file `export const meta` + injected-globals format. Triggers include "visualize my workflow", "launch control tower", "show me what that workflow run cost", "graph this workflow", "instrument my workflow", "estimate workflow cost", "why was that workflow slow", or "replay a workflow without spending tokens".
-version: 0.1.0
-user_invocable: true
+description: Use when the user wants to visualize, instrument, analyze, budget, replay, estimate, audit, or explain Claude Code Workflow and agent/subagent runs — including "can I trust this result?", "where did my money go?", "why was it slow?", "what did the subagents do?", "graph this workflow", "instrument my workflow", "estimate workflow cost", or "replay a workflow without spending tokens".
+metadata:
+  version: "0.1.0"
+  user_invocable: "true"
 ---
 
 # workflow-lens
@@ -22,11 +23,27 @@ A Claude Code workflow is ONE plain-JS file whose body uses 8 injected globals
 (`agent`, `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`).
 workflow-lens operates on that file **unmodified**.
 
+## Run review lens
+
+When the user asks about a previous agent, workflow, or subagent run, translate the trace
+into three answers before showing raw details:
+
+- **Can I trust this result?** Point to transcript-visible evidence: files read, searches,
+  commands, tests, subagent prompts, tool results, and the final output. Be explicit that
+  this is an audit trail, not a correctness proof.
+- **Where did my money go?** Attribute estimated cost to the main conversation,
+  workflows, subagents, model tiers, tokens, and cache reads/writes. Call out the biggest
+  spender first.
+- **Why was it slow?** Separate elapsed session span from actual launched work. Use the
+  inference-vs-tool timeline to identify whether model inference, tool execution, or the
+  main conversation span dominated.
+
 ## Pick the right tool
 
 | The user wants… | Use |
 |---|---|
-| An interactive dashboard of their real recent workflow runs | **Control Tower** → run `/control-tower` (or `node scripts/launch-control-tower.mjs`) |
+| An interactive dashboard of their real recent workflow runs | The `/control-tower` command |
+| A readable trust/money/speed explanation of an agent or subagent run | **Control Tower → Active Session → Run review** |
 | A one-shot static HTML report / graph of a specific workflow file | `workflow-lens viz` |
 | To know what a run *will* cost before running it | `workflow-lens estimate` |
 | To run/replay a workflow with metering and a hard budget cap | `workflow-lens run` |
@@ -34,33 +51,29 @@ workflow-lens operates on that file **unmodified**.
 
 ## Control Tower (the dashboard)
 
-```sh
-node scripts/launch-control-tower.mjs            # auto-discovers the current session
-node scripts/launch-control-tower.mjs --port 9000  # pin a port (default is a random free high port)
-node scripts/launch-control-tower.mjs --session-dir ~/.claude/projects/<proj>/<session>
-```
+Use the `/control-tower` command to launch the dashboard. Do not hand-roll the server
+startup from this skill; the command owns daemonization, dependency install, log file,
+PID, URL extraction, and health checking.
 
-Start it **in the background** (long-running server). It binds to a **random free high
-port** so it won't clash with the user's own dev servers — read the actual URL from the
-launcher's `[launch] starting Control Tower on http://localhost:<port>` line, then confirm
-with `curl -fsS http://localhost:<port>/v1/health` and report that URL to the user. The
-**Observe (native)** tab needs a session dir containing `workflows/wf_*.json` (+
-`subagents/workflows/wf_*/`) — that is where the `Workflow` tool writes run artifacts. Cost
-shown there is reconstructed from transcripts with the cache-aware convention
-(cache_creation ×1.25, cache_read ×0.10), so it is an estimate, not a billed figure.
+After launch, use **Active Session → Run review** for a plain-language explanation of
+trust, money, and speed. Use **Subagents** to inspect child agents, and **Workflows** to
+inspect workflow-agent traces.
 
 ## workflow-lens CLI (keyless unless noted)
 
+Use the installed-plugin-safe wrapper so paths and dependencies are deterministic:
+
 ```sh
-cd packages/workflow-lens
-node bin/workflow-lens.mjs graph     <workflow.js> [--json]      # static AST graph
-node bin/workflow-lens.mjs lint      <workflow.js>               # resume-safety lint
-node bin/workflow-lens.mjs estimate  <workflow.js> [--json]      # pre-flight cost/wall (±200%)
-node bin/workflow-lens.mjs instrument <workflow.js> [--check]    # splice telemetry prelude
-node bin/workflow-lens.mjs viz       <workflow.js> [--run run.json] [--out out.html]
-node bin/workflow-lens.mjs run       <workflow.js> [--budget 0.01] [--replay c.json] [--out out/]
-node bin/workflow-lens.mjs learn     <workflow.js> [--out out/]  # needs key
+node "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-lens-cli.mjs" graph      <workflow.js> [--json]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-lens-cli.mjs" lint       <workflow.js>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-lens-cli.mjs" estimate   <workflow.js> [--json]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-lens-cli.mjs" instrument <workflow.js> [--check]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-lens-cli.mjs" viz        <workflow.js> [--run run.json] [--out out.html]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-lens-cli.mjs" run        <workflow.js> [--budget 0.01] [--replay c.json] [--out out/]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-lens-cli.mjs" learn      <workflow.js> [--out out/]  # needs key
 ```
+
+For local repo development, `node scripts/workflow-lens-cli.mjs ...` is equivalent.
 
 `run` / `learn` / `estimate --calibrate` need `ANTHROPIC_API_KEY` (or
 `OPENROUTER_API_KEY` with `--provider openrouter`) and **fail closed** with

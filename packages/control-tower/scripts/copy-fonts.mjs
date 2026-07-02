@@ -1,6 +1,6 @@
-// scripts/copy-fonts.mjs — postinstall: copy the two Geist variable woff2 files
-// from node_modules/geist into public/fonts/ so the server can self-host them
-// with NO CDN dependency at serve time.
+// scripts/copy-fonts.mjs — optional developer helper: copy the two Geist variable
+// woff2 files from node_modules/geist into public/fonts/ so the server can
+// self-host them with NO CDN dependency at serve time.
 //
 // If the geist package is absent (CI without devDeps, etc.) this script logs a
 // warning and exits 0 — the server will fall back to system fonts gracefully.
