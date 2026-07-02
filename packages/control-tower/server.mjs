@@ -36,7 +36,34 @@ import { homedir } from 'node:os'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.PORT || '8787', 10)
+// Bind loopback only: the dashboard reads private transcripts and /v1/self-update
+// runs git — it must never be reachable from the LAN. Override deliberately with HOST.
+const HOST = process.env.HOST || '127.0.0.1'
 const LENSVERSION = '0.1.0'  // workflow-lens version (from its package.json)
+
+// ── Local-only request guard ─────────────────────────────────────────────────
+// Defense against DNS rebinding (Host header pointing elsewhere) and malicious
+// web pages POSTing cross-origin to localhost. Same-origin browser requests and
+// plain curl/localhost tooling pass; everything else gets 403.
+function isLoopbackName(name) {
+  return name === 'localhost' || name === '127.0.0.1' || name === '::1' || name === '[::1]'
+}
+function hostHeaderName(value) {
+  const v = String(value || '').toLowerCase()
+  const m = v.match(/^(\[[^\]]*\]|[^:]*)/)
+  return m ? m[1] : v
+}
+function requestAllowed(req) {
+  if (!isLoopbackName(hostHeaderName(req.headers.host))) return false
+  const origin = req.headers.origin
+  if (!origin) return true // no Origin: curl / same-origin GET navigation
+  if (origin === 'null') return false // sandboxed-iframe / file:// senders
+  try {
+    return isLoopbackName(new URL(origin).hostname)
+  } catch {
+    return false
+  }
+}
 
 // ── Bridge: session dir + beacon store ───────────────────────────────────────
 // SESS and PROJECT_DIR are MUTABLE: the Sessions browser can switch the active
@@ -933,6 +960,10 @@ async function handle(req, res) {
 // ── Server bootstrap ──────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   try {
+    if (!requestAllowed(req)) {
+      jsonErr(res, 'FORBIDDEN', 'Caliper only accepts local same-origin requests', 403)
+      return
+    }
     await handle(req, res)
   } catch (e) {
     console.error('[server] unhandled error:', e)
@@ -945,7 +976,7 @@ const server = http.createServer(async (req, res) => {
 // Ensure learnings dir exists
 mkdirSync(join(__dir, 'learnings'), { recursive: true })
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   const creds = probeCredentials(process.env)
   console.log(`[control-tower] listening on http://localhost:${PORT}`)
   console.log(`[control-tower] anthropic key: ${creds.anthropic ? 'SET' : 'UNSET (live runs disabled)'}`)

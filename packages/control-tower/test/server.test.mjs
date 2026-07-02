@@ -255,3 +255,50 @@ test('POST /v1/runs — replay with hello cassette streams done', { timeout: 200
   assert.ok(finalSnap, 'run reached done status within polling window')
   assert.ok(finalSnap.telemetry?.run?.calls >= 0, 'telemetry has call count')
 })
+
+// ── Local-only request guard ──────────────────────────────────────────────────
+
+// Raw GET with arbitrary headers (fetch forbids overriding Host).
+async function rawGet(path, headers) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(BASE + path, { method: 'GET', headers }, (res) => {
+      let body = ''
+      res.on('data', (d) => { body += d })
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(body) }) }
+        catch { resolve({ status: res.statusCode, body }) }
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+test('guard — non-localhost Host header is rejected (DNS rebinding)', async () => {
+  const res = await rawGet('/v1/health', { Host: 'evil.example.com' })
+  assert.equal(res.status, 403, 'status 403')
+  assert.equal(res.body?.error?.code, 'FORBIDDEN')
+})
+
+test('guard — cross-origin Origin header is rejected', async () => {
+  const res = await rawGet('/v1/health', { Origin: 'https://evil.example.com' })
+  assert.equal(res.status, 403, 'status 403')
+  assert.equal(res.body?.error?.code, 'FORBIDDEN')
+})
+
+test('guard — Origin "null" (sandboxed iframe / file://) is rejected', async () => {
+  const res = await rawGet('/v1/health', { Origin: 'null' })
+  assert.equal(res.status, 403, 'status 403')
+})
+
+test('guard — localhost Origin is allowed', async () => {
+  const res = await rawGet('/v1/health', { Origin: `http://localhost:${SELF_PORT}` })
+  assert.equal(res.status, 200, 'status 200')
+  assert.equal(res.body.ok, true)
+})
+
+test('guard — observed runId traversal attempt returns 404, not file contents', async () => {
+  // ..%2f decodes to ../ in the route param; parseRunJson must reject it.
+  const res = await rawGet('/v1/observed/x%2f..%2f..%2fsettings')
+  assert.ok(res.status === 404 || res.status === 503, `404/503, got ${res.status}`)
+})

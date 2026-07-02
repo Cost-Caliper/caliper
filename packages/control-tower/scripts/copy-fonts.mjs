@@ -1,9 +1,8 @@
-// scripts/copy-fonts.mjs — postinstall: copy the two Geist variable woff2 files
-// from node_modules/geist into public/fonts/ so the server can self-host them
-// with NO CDN dependency at serve time.
-//
-// If the geist package is absent (CI without devDeps, etc.) this script logs a
-// warning and exits 0 — the server will fall back to system fonts gracefully.
+// scripts/copy-fonts.mjs — manual font refresh (npm run fonts): copy the two
+// Geist variable woff2 files from node_modules/geist into public/fonts/.
+// The woff2 files are COMMITTED, so installs need no geist dependency and no
+// install scripts; run `npm i --no-save geist && npm run fonts` only to bump
+// the font version. If geist is absent this logs a warning and exits 0.
 
 import { copyFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'

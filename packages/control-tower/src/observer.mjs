@@ -53,7 +53,7 @@ function parseTraceLine(line) {
 // saved file when the run came from a named/saved workflow), and the exact source the
 // harness executed (embedded in the run record). Used by GET /v1/observed/:id/script.
 export function readRunScript(runId, sessDir) {
-  if (!/^[0-9a-f-]+$/i.test(String(runId))) return null // guard path traversal
+  if (!/^[0-9a-z_-]+$/i.test(String(runId))) return null // guard path traversal
   const wfPath = join(sessDir, 'workflows', `wf_${runId}.json`)
   if (!existsSync(wfPath)) return null
   let raw
@@ -66,6 +66,7 @@ export function readRunScript(runId, sessDir) {
 }
 
 export function parseRunJson(runId, sessDir) {
+  if (!/^[0-9a-z_-]+$/i.test(String(runId))) return null // guard path traversal (route params arrive URL-decoded)
   const wfPath = join(sessDir, 'workflows', `wf_${runId}.json`)
   if (!existsSync(wfPath)) return null
 

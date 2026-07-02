@@ -10,13 +10,11 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "postinstall": "node scripts/copy-fonts.mjs",
     "fonts": "node scripts/copy-fonts.mjs",
     "test": "node --test test/*.test.mjs",
     "smoke": "PORT=48787 node server.mjs & sleep 1; curl -fsS http://localhost:48787/v1/health > /dev/null && echo OK; kill %1"
   },
   "dependencies": {
-    "workflow-lens": "file:../workflow-lens",
-    "geist": "^1.7.2"
+    "workflow-lens": "file:../workflow-lens"
   }
 }

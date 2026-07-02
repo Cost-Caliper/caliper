@@ -65,7 +65,11 @@ async function pickFreePort() {
 function ensureDeps(dir, label) {
   if (existsSync(join(dir, 'node_modules'))) return
   console.error(`[launch] installing deps for ${label} …`)
-  const r = spawnSync('npm', ['install'], { cwd: dir, stdio: 'inherit' })
+  // --ignore-scripts: never run third-party install hooks on the user's machine.
+  // npm ci needs a lockfile in sync with package.json; fall back to install otherwise.
+  const flags = ['--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund']
+  let r = spawnSync('npm', ['ci', ...flags], { cwd: dir, stdio: 'inherit' })
+  if (r.status !== 0) r = spawnSync('npm', ['install', ...flags], { cwd: dir, stdio: 'inherit' })
   if (r.status !== 0) {
     console.error(`[launch] npm install failed for ${label}`)
     process.exit(1)
