@@ -2899,7 +2899,7 @@ async function navigateToRun(runId) {
   // Snapshot the render generation BEFORE switching tabs: setTab('observe') always
   // reloads the list, and acting on a row from the outgoing render gets wiped.
   const genBefore = observedEls.list?.dataset.renderGen || '0';
-  document.querySelector('.tabbar-btn[data-tab="observe"]')?.click();
+  setTab("observe");
   const sel = (window.CSS && CSS.escape) ? CSS.escape(runId) : runId;
   // Poll until loadObservedList has rendered the row. A COLD server scan of a big
   // session can take well over 2s — the old 2s window expired silently and the jump
@@ -2920,7 +2920,7 @@ async function navigateToRun(runId) {
   }
 }
 async function navigateToSubagent(agentId) {
-  document.querySelector('.tabbar-btn[data-tab="subagents"]')?.click();
+  setTab("subagents");
   await new Promise((r) => setTimeout(r, 320));
   selectSubagent(agentId);
 }
@@ -3025,27 +3025,65 @@ let showEmptySessions = false;
 
 async function loadSessionsBrowser() {
   const list = document.getElementById('sessions-list'); if (!list) return;
-  if (!projectsData) await loadProjectsPicker();
+  // The picker must exist in the DOM even when projectsData is already cached
+  // (e.g. arriving here from the Home dashboard, which fetched the folder list).
+  if (!projectsData || !document.getElementById('project-picker')) await loadProjectsPicker();
   await loadSessionsList();
 }
-async function loadProjectsPicker() {
-  try { projectsData = await apiFetch('/v1/projects'); } catch { projectsData = null; return; }
-  const host = document.getElementById('sessions-context'); if (!host) return;
+// Group the folder picker so 200 near-identical worktree paths become scannable:
+// conductor worktrees group under their repo ("agent-university — conductor worktrees"),
+// everything else groups under its parent dir. Groups sort by recency; a filter box
+// narrows the list as you type.
+function projectGroupKey(p) {
+  const cwd = p.cwd || p.slug;
+  const m = String(cwd).match(/^(.*\/conductor\/workspaces\/([^/]+))\/[^/]+$/);
+  if (m) return { key: m[1], label: `${m[2]} — conductor worktrees` };
+  const parent = String(cwd).replace(/\/[^/]+\/?$/, '') || cwd;
+  return { key: parent, label: homeAbbrev(parent) + '/' };
+}
+function renderProjectPickerOptions(filter = '') {
+  const sel = document.getElementById('project-picker'); if (!sel || !projectsData) return;
   const active = projectsData.activeProjectSlug;
-  const opts = projectsData.projects.map((p) => {
-    const label = `${homeAbbrev(p.cwd || p.slug)}  ·  ${p.sessionCount} session${p.sessionCount === 1 ? '' : 's'}`;
-    return `<option value="${esc(p.slug)}"${p.slug === active ? ' selected' : ''}>${esc(label)}</option>`;
-  }).join('');
+  const f = filter.trim().toLowerCase();
+  const groups = new Map();
+  for (const p of projectsData.projects) {
+    if (f && !String(p.cwd || p.slug).toLowerCase().includes(f)) continue;
+    const g = projectGroupKey(p);
+    if (!groups.has(g.key)) groups.set(g.key, { label: g.label, items: [], last: 0 });
+    const grp = groups.get(g.key);
+    grp.items.push(p); grp.last = Math.max(grp.last, p.lastActivityMs || 0);
+  }
+  const ordered = [...groups.values()].sort((a, b) => b.last - a.last);
+  let html = '';
+  for (const g of ordered) {
+    g.items.sort((a, b) => (b.lastActivityMs || 0) - (a.lastActivityMs || 0));
+    const opts = g.items.map((p) => {
+      const name = String(p.cwd || p.slug).split('/').pop();
+      return `<option value="${esc(p.slug)}"${p.slug === active ? ' selected' : ''}>${esc(name)} · ${p.sessionCount} session${p.sessionCount === 1 ? '' : 's'}</option>`;
+    }).join('');
+    html += g.items.length > 1 ? `<optgroup label="${esc(g.label)}">${opts}</optgroup>` : opts;
+  }
+  sel.innerHTML = html || '<option value="" disabled>No folders match</option>';
+}
+async function loadProjectsPicker() {
+  if (!projectsData) {
+    try { projectsData = await apiFetch('/v1/projects'); } catch { projectsData = null; return; }
+  }
+  const host = document.getElementById('sessions-context'); if (!host) return;
   host.innerHTML = `<div class="sess-projectbar">`
-    + `<label class="sess-projectlabel" for="project-picker">Project folder</label>`
-    + `<select id="project-picker" class="input sess-project-select" title="Every folder you've run Claude Code in. Pick one to browse its sessions.">${opts}</select>`
-    + `<span class="muted" style="font-size:11px">${projectsData.projects.length} folders known to Claude Code</span></div>`;
+    + `<label class="sess-projectlabel" for="project-picker">Folder</label>`
+    + `<input id="project-filter" class="input sess-project-filter" type="search" placeholder="filter folders…" aria-label="Filter folders">`
+    + `<select id="project-picker" class="input sess-project-select" title="Every folder you've run Claude Code in — grouped by repo, most recent first.">${''}</select>`
+    + `<span class="muted" style="font-size:11px">${projectsData.projects.length} folders</span></div>`;
+  renderProjectPickerOptions();
+  document.getElementById('project-filter')?.addEventListener('input', (e) => renderProjectPickerOptions(e.target.value));
   document.getElementById('project-picker')?.addEventListener('change', async (e) => {
-    const slug = e.target.value;
+    const slug = e.target.value; if (!slug) return;
     try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); }
     catch (err) { alert('Could not switch project: ' + err.message); return; }
     resetSessionCaches();
     projectsData.activeProjectSlug = slug;
+    renderNav();
     await loadSessionsList();
   });
 }
@@ -3086,7 +3124,12 @@ function renderSessionsList() {
     const g = groups.get(label); g.items.push({ ...s, _ms: ms }); g.ms = Math.max(g.ms, ms);
   }
   const ordered = [...groups.entries()].sort((a, b) => b[1].ms - a[1].ms);
-  let html = '';
+  // Folder rollup: total conversation spend across the loaded sessions (honest bound).
+  const totCost = all.reduce((a, b) => a + (b.costUsd || 0), 0);
+  const liveN = all.filter((s) => (Date.now() - (s.mtimeMs || 0)) < 120000).length;
+  let html = `<div class="folder-rollup"><span class="folder-rollup-cost mono">${fmtUsdShort(totCost)}</span>`
+    + `<span class="muted"> across ${all.length}${sessionsData.totalSessions > all.length ? ` of ${sessionsData.totalSessions}` : ''} session${all.length === 1 ? '' : 's'} (conversation cost, est.)</span>`
+    + (liveN ? `<span class="sess-live-pill" style="margin-left:10px">${liveN} live</span>` : '') + `</div>`;
   for (const [label, g] of ordered) {
     g.items.sort((a, b) => b._ms - a._ms);
     const dayCost = g.items.reduce((a, b) => a + (b.costUsd || 0), 0);
@@ -3150,7 +3193,9 @@ let currentTab = 'sessions';
 let currentSessionId = null;
 let navApplying = false; // true while restoring from popstate/deep-link (don't re-push)
 function navHash(sub = null) {
-  return '#/' + currentTab + (currentSessionId ? '/' + currentSessionId : '') + (sub ? '/' + sub : '');
+  // Session id belongs only in session-scoped hashes (#/home stays clean).
+  const withSession = SESSION_SCOPE_TABS.includes(currentTab) && currentSessionId;
+  return '#/' + currentTab + (withSession ? '/' + currentSessionId : '') + (sub ? '/' + sub : '');
 }
 function pushNav(sub = null) {
   if (navApplying) return;
@@ -3194,6 +3239,8 @@ async function refreshSessionStrip() {
   try { data = await apiFetch('/v1/session/active'); } catch { /* server unreachable — leave as-is */ }
   if (data && data.sessionId) currentSessionId = data.sessionId;
   const s = data && data.session;
+  stripTitleCache = s ? (s.title || s.id) : null;
+  renderNav(); // session crumb shows the title once known
   if (!s) {
     strip.innerHTML = `<span class="sess-strip-label">No session selected</span>`
       + `<span class="sess-strip-title muted">pick one from the Sessions tab</span>`
@@ -3215,8 +3262,10 @@ document.getElementById('active-session-strip')?.addEventListener('click', (e) =
   if (e.target.closest('[data-goto-sessions]')) setTab('sessions');
 });
 
+const SESSION_SCOPE_TABS = ['session', 'observe', 'subagents'];
 function setTab(tab) {
-  const panels = { control: 'tab-control', sessions: 'tab-sessions', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
+  const panels = { control: 'tab-control', home: 'tab-home', sessions: 'tab-sessions', session: 'tab-session', observe: 'tab-observe', subagents: 'tab-subagents' };
+  if (!panels[tab]) tab = 'home';
   for (const [t, id] of Object.entries(panels)) { const el = document.getElementById(id); if (el) el.hidden = (t !== tab); }
   // The run-controls chrome belongs to the Control tab only.
   const isControl = tab === 'control';
@@ -3224,29 +3273,117 @@ function setTab(tab) {
   hide('.control-bar');
   hide('#workflow-picker');
   hide('.seg-control');
-  document.querySelectorAll('.tabbar-btn').forEach((b) => {
-    const sel = b.dataset.tab === tab;
-    b.setAttribute('aria-selected', sel ? 'true' : 'false');
-    b.classList.toggle('active', sel);
-  });
   currentTab = tab;
+  renderNav();
   pushNav(); // history entry per tab move (no-op while restoring from popstate)
-  // Identity strip: visible on every drill-in tab, hidden on the Sessions list itself.
+  // Identity strip: visible in session scope, hidden on Home and the folder list.
   const strip = document.getElementById('active-session-strip');
-  if (strip) { strip.hidden = !['session', 'observe', 'subagents'].includes(tab); if (!strip.hidden) refreshSessionStrip(); }
+  if (strip) { strip.hidden = !SESSION_SCOPE_TABS.includes(tab); if (!strip.hidden) refreshSessionStrip(); }
+  if (tab === 'home') loadHome();
   if (tab === 'sessions') loadSessionsBrowser();
   if (tab === 'session') loadSessionWaterfall();
   if (tab === 'observe') loadObservedList();
   if (tab === 'subagents') loadSubagentTree();
 }
-document.querySelectorAll('.tabbar-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+// ── Breadcrumb + session sub-tabs ─────────────────────────────────────────────
+// ⌂ All folders / <folder> / “<session title>” — each level clickable; the session
+// level carries sub-tabs [Overview | Workflows | Subagents].
+let stripTitleCache = null; // set by refreshSessionStrip for the session crumb
+function renderNav() {
+  const host = document.getElementById('nav-crumbs'); if (!host) return;
+  const inSession = SESSION_SCOPE_TABS.includes(currentTab);
+  const folderLabel = (() => {
+    const p = projectsData && projectsData.projects && projectsData.projects.find((x) => x.slug === projectsData.activeProjectSlug);
+    return p ? homeAbbrev(p.cwd || p.slug) : null;
+  })();
+  let html = `<button class="crumb${currentTab === 'home' ? ' crumb-here' : ''}" type="button" data-nav-tab="home" title="All folders on this machine">⌂ All folders</button>`;
+  if (currentTab !== 'home') {
+    html += `<span class="crumb-sep">/</span>`
+      + `<button class="crumb${currentTab === 'sessions' ? ' crumb-here' : ''}" type="button" data-nav-tab="sessions" title="This folder's sessions">${esc(folderLabel || 'Folder')}</button>`;
+  }
+  if (inSession) {
+    const t = stripTitleCache ? truncTxt(stripTitleCache, 44) : 'Session';
+    html += `<span class="crumb-sep">/</span><span class="crumb crumb-here" title="${esc(stripTitleCache || '')}">“${esc(t)}”</span>`;
+  }
+  host.innerHTML = html;
+  const subtabs = document.getElementById('session-subtabs');
+  if (subtabs) {
+    subtabs.hidden = !inSession;
+    subtabs.querySelectorAll('.subtab-btn').forEach((b) => {
+      const sel = b.dataset.tab === currentTab;
+      b.setAttribute('aria-selected', sel ? 'true' : 'false');
+      b.classList.toggle('active', sel);
+    });
+  }
+}
+document.getElementById('nav-crumbs')?.addEventListener('click', (e) => {
+  const c = e.target.closest('[data-nav-tab]'); if (c) setTab(c.getAttribute('data-nav-tab'));
+});
+
+// ── Home dashboard: everything Claude Code has done on this machine ───────────
+async function loadHome() {
+  const body = document.getElementById('home-body'); if (!body) return;
+  let home;
+  try { home = await apiFetch('/v1/home'); } catch (err) { body.innerHTML = `<p class="muted" style="padding:12px">Could not load: ${esc(err.message)}</p>`; return; }
+  if (!projectsData) projectsData = { projects: home.projects, activeProjectSlug: home.activeProjectSlug };
+  const row = (s) => {
+    const badges = [];
+    if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+    if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+    const live = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — appears to be running now">live</span>' : '';
+    return `<button class="sess-row home-sess-row" type="button" data-home-session="${esc(s.id)}" data-home-project="${esc(s.projectSlug)}" title="${esc(s.projectCwd || s.projectSlug)}">`
+      + `<span class="sess-time mono">${s.mtimeMs ? sessDayLabel(s.mtimeMs) + ' ' + sessClock(s.mtimeMs) : '—'}</span>`
+      + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 80))}${live}</span>`
+      + `<span class="sess-badges">${badges.join('')}</span>`
+      + `<span class="home-folder mono muted">${esc(truncTxt(homeAbbrev(s.projectCwd || s.projectSlug), 28))}</span>`
+      + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — conversation cost (estimate)">${fmtUsdShort(s.costUsd)}</span>`
+      + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
+  };
+  const folders = (home.folderTotals || []).map((f) => `<button class="home-folder-card" type="button" data-home-folder="${esc(f.slug)}" title="${esc(f.cwd || f.slug)}">`
+    + `<span class="hf-name">${esc(truncTxt(homeAbbrev(f.cwd || f.slug), 34))}</span>`
+    + `<span class="hf-meta mono">${f.sessions} session${f.sessions === 1 ? '' : 's'}</span>`
+    + `<span class="hf-cost mono" title="Spend across this folder's ${f.coverage} most recent session${f.coverage === 1 ? '' : 's'} (estimate)">${fmtUsdShort(f.costUsd)}<span class="hf-cov">/${f.coverage} recent</span></span></button>`).join('');
+  const moreFolders = home.projects.length - (home.folderTotals || []).length;
+  const liveBlock = home.live && home.live.length
+    ? `<div class="home-sect">Running now</div>${home.live.map(row).join('')}` : '';
+  body.innerHTML = liveBlock
+    + `<div class="home-sect">Recent sessions — all folders</div>${(home.recents || []).map(row).join('') || '<p class="muted" style="padding:8px;font-size:12px">Nothing yet.</p>'}`
+    + `<div class="home-sect">Most active folders</div><div class="home-folders">${folders}</div>`
+    + (moreFolders > 0 ? `<button class="sess-empty-toggle" type="button" data-home-allfolders>Browse all ${home.projects.length} folders…</button>` : '');
+}
+document.getElementById('home-body')?.addEventListener('click', async (e) => {
+  const sess = e.target.closest('[data-home-session]');
+  if (sess) {
+    const slug = sess.getAttribute('data-home-project');
+    if (projectsData && projectsData.activeProjectSlug !== slug) {
+      try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); } catch (err) { alert('Could not switch folder: ' + err.message); return; }
+      if (projectsData) projectsData.activeProjectSlug = slug;
+      resetSessionCaches();
+    }
+    selectSession(sess.getAttribute('data-home-session'));
+    return;
+  }
+  const folder = e.target.closest('[data-home-folder]');
+  if (folder) {
+    const slug = folder.getAttribute('data-home-folder');
+    try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); } catch (err) { alert('Could not switch folder: ' + err.message); return; }
+    resetSessionCaches();
+    if (projectsData) projectsData.activeProjectSlug = slug;
+    setTab('sessions');
+    return;
+  }
+  if (e.target.closest('[data-home-allfolders]')) setTab('sessions');
+});
+document.getElementById('home-refresh')?.addEventListener('click', () => loadHome());
+document.querySelectorAll('.tabbar-btn, .subtab-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
 init();
 // Deep-link support: #/tab/sessionId/agentId restores the exact spot; else land on Sessions.
 {
   const st = parseNavHash(location.hash);
   if (st) { applyNavState(st).then(() => history.replaceState(st, '', location.hash)); }
-  else { navApplying = true; setTab('sessions'); navApplying = false; history.replaceState({ tab: 'sessions', sessionId: null, sub: null }, '', '#/sessions'); }
+  else { navApplying = true; setTab('home'); navApplying = false; history.replaceState({ tab: 'home', sessionId: null, sub: null }, '', '#/home'); }
 }
 
 // Debug/QA handle (module scope hides everything otherwise). Read-only-ish: used by

@@ -31,7 +31,7 @@ import { deriveOptimizations } from './src/optimize.mjs'
 import { distillLearnings, groundingCheck } from '../workflow-lens/src/learnings.mjs'
 import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns, readRunScript } from './src/observer.mjs'
 import { scanSubagentTree, reconstructSubagent } from './src/subagents.mjs'
-import { scanProjectSessions, summarizeSessionFile, listProjects } from './src/sessions.mjs'
+import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData } from './src/sessions.mjs'
 import { homedir } from 'node:os'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -184,6 +184,15 @@ async function handle(req, res) {
         beaconInstrumentationIds: [...beaconByInstrumentationId.keys()],
       },
     })
+    return
+  }
+
+  // ── GET /v1/home — cross-folder dashboard (recents, live, bounded spend rollups) ──
+  if (method === 'GET' && urlPath === '/v1/home') {
+    const home = buildHomeData(PROJECTS_ROOT)
+    home.activeProjectSlug = PROJECT_DIR ? basename(PROJECT_DIR) : null
+    home.activeSessionId = SESS ? basename(String(SESS).replace(/[/\\]+$/, '')) : null
+    jsonOk(res, home)
     return
   }
 

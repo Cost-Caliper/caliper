@@ -102,18 +102,36 @@
   .editor-agent textarea:disabled{opacity:.55;cursor:not-allowed}
   .editor-dirty{border-color:var(--blue)}
   </style>
-  <!-- The Control (shim) tab is hidden for now (kept in DOM, just `hidden`). Observe and
-       Subagents are the two visible views. To restore Control: remove `hidden` from its button. -->
-  <div class="tabbar" role="tablist" aria-label="Dashboard mode">
-    <button class="tabbar-btn" data-tab="control" role="tab" type="button" aria-selected="false" hidden>Control (shim)</button>
-    <button class="tabbar-btn active" data-tab="sessions" role="tab" type="button" aria-selected="true">Sessions</button>
-    <button class="tabbar-btn" data-tab="session" role="tab" type="button" aria-selected="false">Active Session</button>
-    <button class="tabbar-btn" data-tab="observe" role="tab" type="button" aria-selected="false">Workflows</button>
-    <button class="tabbar-btn" data-tab="subagents" role="tab" type="button" aria-selected="false">Subagents</button>
-  </div>
+  <!-- ── Hierarchical navigation: Home (all folders) → Folder (its sessions) → Session
+       (Overview | Workflows | Subagents). The old flat tabs confused testers — three of
+       the four were secretly session-scoped. The Control (shim) tab stays hidden. -->
+  <nav class="crumb-bar" aria-label="Location">
+    <button class="tabbar-btn" data-tab="control" type="button" hidden>Control (shim)</button>
+    <div id="nav-crumbs" class="nav-crumbs"></div>
+    <div id="session-subtabs" class="session-subtabs" role="tablist" aria-label="Session views" hidden>
+      <button class="subtab-btn" data-tab="session" role="tab" type="button">Overview</button>
+      <button class="subtab-btn" data-tab="observe" role="tab" type="button">Workflows</button>
+      <button class="subtab-btn" data-tab="subagents" role="tab" type="button">Subagents</button>
+    </div>
+  </nav>
 
   <!-- Persistent identity strip: which session the drill-in tabs are showing -->
   <div id="active-session-strip" class="session-strip" hidden></div>
+
+  <div id="tab-home" class="tab-panel" hidden>
+  <!-- ── Home: everything Claude Code has done on this machine, at a glance ── -->
+    <section class="card observed-panel" aria-labelledby="home-heading">
+      <div class="section-header">
+        <h2 class="section-title" id="home-heading">
+          All activity
+          <span class="source-badge badge-observed" title="Every folder you've run Claude Code in, with recent sessions across all of them. Pick a folder or jump straight into a session.">this machine</span>
+        </h2>
+        <button class="btn btn-secondary btn-sm" type="button" id="home-refresh" aria-label="Refresh dashboard">Refresh</button>
+      </div>
+      <div id="home-body"><p class="muted" style="padding:12px;font-size:12px">Loading…</p></div>
+      <p class="observed-caveat label-13 muted" style="margin-top:12px">Spend figures cover each folder's most recent sessions (shown per folder), reconstructed from transcripts — cache-aware estimates, not billed amounts. Click a folder for its full session list; click a session to open it.</p>
+    </section>
+  </div><!-- /tab-home -->
 
   <div id="tab-sessions" class="tab-panel">
   <!-- ── Sessions browser: EVERY session in this project — incl. plain conversations ── -->

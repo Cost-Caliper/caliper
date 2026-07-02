@@ -134,6 +134,32 @@ export function listProjects(projectsRoot) {
   return projects
 }
 
+// Home dashboard data: the full folder list (picker), recent sessions ACROSS the most
+// recently active folders, live-now sessions, and per-folder spend rollups. Work is
+// BOUNDED (top `folders` folders × newest `perFolder` sessions each; mtime-cached), so
+// the home never scans a whole multi-GB history — rollups say how many sessions they
+// cover (`coverage`) instead of pretending to be all-time totals.
+export function buildHomeData(projectsRoot, { folders = 8, perFolder = 10, recents = 12 } = {}) {
+  const projects = listProjects(projectsRoot)
+  const active = projects.filter((p) => p.sessionCount > 0).slice(0, folders)
+  const all = []
+  const folderTotals = []
+  for (const p of active) {
+    const scan = scanProjectSessions(p.dir, { limit: perFolder })
+    let cost = 0
+    for (const s of scan.sessions) { cost += s.costUsd || 0; all.push({ ...s, projectSlug: p.slug, projectCwd: p.cwd }) }
+    folderTotals.push({ slug: p.slug, cwd: p.cwd, costUsd: +cost.toFixed(6), sessions: scan.totalSessions, coverage: scan.sessions.length, lastActivityMs: p.lastActivityMs })
+  }
+  all.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0))
+  const now = Date.now()
+  return {
+    projects,
+    recents: all.slice(0, recents),
+    live: all.filter((s) => now - (s.mtimeMs || 0) < 120000),
+    folderTotals,
+  }
+}
+
 // List every session in the project dir, newest-first by transcript mtime.
 // `limit` caps how many are SUMMARIZED (big transcripts parse once then cache);
 // totalSessions reports how many exist beyond the cap.

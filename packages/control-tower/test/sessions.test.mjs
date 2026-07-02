@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { scanProjectSessions, summarizeSessionFile, listProjects } from '../src/sessions.mjs'
+import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData } from '../src/sessions.mjs'
 import { scanSubagentTree, MAIN_SESSION } from '../src/subagents.mjs'
 
 const aLine = (ts, model = 'claude-opus-4-8', text = 'ok') =>
@@ -129,6 +129,27 @@ test('listProjects: enumerates project dirs with real cwd, session count, last a
     assert.equal(b.cwd, null)
     // newest-first ordering
     assert.equal(projects[0].slug, '-Users-x-develop-alpha')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('buildHomeData: cross-folder recents + bounded folder spend rollups', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ct-home-'))
+  try {
+    const projA = join(root, '-Users-x-develop-alpha')
+    mkdirSync(projA, { recursive: true })
+    writeFileSync(join(projA, `${RICH_ID}.jsonl`), [uLine('2026-06-01T00:00:00.000Z', 'alpha work'), aLine('2026-06-01T00:00:05.000Z')].join('\n'))
+    const projB = join(root, '-Users-x-develop-beta')
+    mkdirSync(projB, { recursive: true })
+    writeFileSync(join(projB, `${PLAIN_ID}.jsonl`), [uLine('2026-06-02T00:00:00.000Z', 'beta work'), aLine('2026-06-02T00:00:03.000Z')].join('\n'))
+
+    const home = buildHomeData(root, { folders: 5, perFolder: 8, recents: 10 })
+    assert.ok(home.projects.length >= 2)                       // full picker list
+    assert.equal(home.recents.length, 2)                        // merged across folders
+    assert.equal(home.recents[0].title, 'beta work')            // newest-first
+    assert.ok(home.recents[0].projectSlug.includes('beta'))     // knows its folder
+    const ft = home.folderTotals.find((f) => f.slug.includes('alpha'))
+    assert.ok(ft && ft.costUsd > 0 && ft.sessions === 1)
+    assert.equal(typeof ft.coverage, 'number')                  // honest "N most recent" bound
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
