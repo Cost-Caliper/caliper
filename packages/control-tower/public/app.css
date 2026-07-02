@@ -1675,3 +1675,26 @@ a.brand { text-decoration: none; }
 .brand-wordmark { font-family: var(--font-mono); letter-spacing: -0.02em; font-weight: 500; }
 /* dark-mode blue aligned to the brand token (#006bff, same as light) */
 [data-theme="dark"] { --blue: #006bff; }
+
+/* Alpha tag on the wordmark */
+.alpha-tag {
+  font-family: var(--font-sans); font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--blue); border: 1px solid color-mix(in srgb, var(--blue) 55%, transparent);
+  border-radius: 999px; padding: 1px 6px; margin-left: 8px; vertical-align: 2px;
+}
+/* Auto-Router teaser — greyed, upper right, not clickable yet */
+.router-teaser {
+  margin-left: auto; order: 10;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--gray-700);
+  border: 1px dashed var(--border-hover); border-radius: 6px;
+  padding: 4px 12px; opacity: .65; cursor: default; white-space: nowrap;
+}
+.router-teaser .soon {
+  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--gray-700); border: 1px solid var(--border); border-radius: 999px; padding: 1px 6px;
+}
+/* when session subtabs are visible they sit left of the teaser */
+.session-subtabs { order: 5; }
+.update-pill { order: 11; margin-left: 10px; }

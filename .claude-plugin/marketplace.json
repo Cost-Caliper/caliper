@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "caliper",
-      "description": "See exactly where your Claude Code spend goes \u2014 sessions, workflows, subagents, machine-wide analytics \u2014 and copy optimization prompts back into Claude. The first Caliper tool.",
+      "description": "Run /caliper after installing. See exactly where your Claude Code spend goes \u2014 sessions, workflows, subagents, machine-wide analytics \u2014 and copy optimization prompts back into Claude. 100% local. The first Caliper tool.",
       "category": "development",
       "source": "./"
     }
