@@ -1,12 +1,43 @@
-# workflow-lens
+# Caliper
 
-Observability for **Claude Code `Workflow` runs** — visualize, instrument, budget, replay,
-and estimate the cost of the single-file `export const meta` + injected-globals workflow
-format. Ships as a **Claude Code plugin** with two tools and one slash command.
+**Precision for your AI spend** — [caliper.run](https://caliper.run)
 
-> A Claude Code workflow is one plain-JS file whose body uses 8 injected globals
-> (`agent`, `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`).
-> workflow-lens operates on that file **unmodified**.
+Caliper shows you exactly where your Claude Code money goes. It reconstructs **every
+session, workflow, and subagent** on your machine from the harness's own transcripts —
+no telemetry, no cloud, runs entirely locally — and gives you:
+
+- **Machine-wide analytics**: all-time spend, daily charts stacked by model, spend by
+  repo, cache economics ($ figures are cache-aware estimates at real per-model rates,
+  cross-checked against ccusage).
+- **Drill-down to the exact step**: folder -> session -> workflow -> agent -> the specific
+  inference or tool call, with full conversations and timelines.
+- **The optimization loop**: one click copies a data-grounded prompt back into Claude
+  Code asking it to cut your costs — or use the bundled `/optimize-spend` skill and let
+  Claude read the data itself and write you a personalized cost-discipline skill.
+
+This plugin is the first Caliper tool. Roadmap: smart routing to open models, then
+custom models fine-tuned on your own usage — see [caliper.run](https://caliper.run).
+
+## Install
+
+```sh
+/plugin marketplace add dennisonbertram/caliper
+/plugin install caliper@caliper
+```
+
+Then launch the dashboard with **`/caliper`** (or `/control-tower`, its alias), and try
+**`/optimize-spend`**. The dashboard checks GitHub for updates and offers a one-click
+update when a new version ships.
+
+### Upgrading from `workflow-lens` (pre-0.24)
+
+The plugin was renamed. Once per machine:
+
+```sh
+/plugin marketplace remove workflow-lens
+/plugin marketplace add dennisonbertram/caliper
+/plugin install caliper@caliper
+```
 
 ## What's in here
 
@@ -25,8 +56,8 @@ them under `packages/` preserves every relative import unchanged.
 
 ```sh
 # Add this repo as a marketplace, then install the plugin
-/plugin marketplace add dennisonbertram/workflow-lens
-/plugin install workflow-lens@workflow-lens
+/plugin marketplace add dennisonbertram/caliper
+/plugin install caliper@caliper
 ```
 
 Then run **`/control-tower`** in any session. It installs deps on first run, auto-discovers

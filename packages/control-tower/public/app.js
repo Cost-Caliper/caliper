@@ -3594,7 +3594,7 @@ function optimizePromptFooter() {
     + `2. Identify the 3-5 biggest cost levers you can actually change (model tier per task type, delegation to cheaper subagents, workflow model mix, prompt/cache stability, avoiding re-reading the same files).\n`
     + `3. Propose concrete changes with expected impact, clearly labeled as estimates.\n`
     + `4. Then OFFER (ask first) to write a personalized cost-discipline skill to ~/.claude/skills/cost-discipline/SKILL.md capturing the durable rules you found — rules grounded in MY observed usage, not generic advice.\n`
-    + `\n## Live data API (while the Control Tower dashboard is running)\n`
+    + `\n## Live data API (while the Caliper dashboard is running)\n`
     + `- ${location.origin}/v1/aggregate — machine-wide totals, by-day/by-repo/by-tier\n`
     + `- ${location.origin}/v1/sessions/all — every session with costs\n`
     + `- ${location.origin}/v1/observed and /v1/observed/:id — workflow runs with per-call telemetry\n`
@@ -3613,14 +3613,14 @@ function buildOptimizePrompt(scope, runId) {
     const tiers = a.byTier.map((x) => `- ${x.tier}: ${fmtUsdShort(x.costUsd)}`).join('\n');
     const repos = a.byRepo.slice(0, 8).map((r) => `- ${r.repo}: ${fmtUsdShort(r.costUsd)} across ${r.sessions} sessions`).join('\n');
     const cacheRatio = t.tokens.in > 0 ? Math.round(t.tokens.cacheRd / (t.tokens.cacheRd + t.tokens.in) * 100) : 0;
-    return `# Optimize my Claude Code spend (machine-wide)\n\nYou are Claude Code running on my machine. Below is my real usage, reconstructed from ~/.claude/projects transcripts by the Control Tower dashboard (snapshot ${ts}).\n\n## Snapshot — all folders, all time\n- Total estimated spend: ${fmtUsdShort(t.costUsd)} across ${fmtN(t.sessions)} sessions in ${fmtN(t.folders)} folders (${a.done ? 'complete scan' : 'partial scan: ' + a.progress.scannedSessions + '/' + a.progress.totalSessions}).\n- Tokens: ${fmtNshort(t.tokens.out)} output · ${fmtNshort(t.tokens.in)} fresh input · ${fmtNshort(t.tokens.cacheRd)} cache reads (${cacheRatio}% of input context came from cache) · ${fmtNshort(t.tokens.cacheWr)} cache writes.\n\n### Spend by model tier\n${tiers}\n\n### Top repos by spend\n${repos}\n` + optimizePromptFooter();
+    return `# Optimize my Claude Code spend (machine-wide)\n\nYou are Claude Code running on my machine. Below is my real usage, reconstructed from ~/.claude/projects transcripts by the Caliper dashboard (caliper.run) (snapshot ${ts}).\n\n## Snapshot — all folders, all time\n- Total estimated spend: ${fmtUsdShort(t.costUsd)} across ${fmtN(t.sessions)} sessions in ${fmtN(t.folders)} folders (${a.done ? 'complete scan' : 'partial scan: ' + a.progress.scannedSessions + '/' + a.progress.totalSessions}).\n- Tokens: ${fmtNshort(t.tokens.out)} output · ${fmtNshort(t.tokens.in)} fresh input · ${fmtNshort(t.tokens.cacheRd)} cache reads (${cacheRatio}% of input context came from cache) · ${fmtNshort(t.tokens.cacheWr)} cache writes.\n\n### Spend by model tier\n${tiers}\n\n### Top repos by spend\n${repos}\n` + optimizePromptFooter();
   }
   if (scope === 'session') {
     const i = lastInsightSummary;
     if (!i) return null;
     const models = MODEL_ORDER.filter((m) => i.modelTotals[m]).map((m) => `- ${m}: ${fmtUsdShort(i.modelTotals[m])}`).join('\n');
     const sav = i.savings ? i.savings.lines.map((l) => `- ${l.tier} → ${l.sub.name}: ${fmtUsdShort(l.cur)} → ${fmtUsdShort(l.subCost)}`).join('\n') : '(not computed)';
-    return `# Make sessions like this one cheaper and more effective\n\nYou are Claude Code. Analyze this real session of mine (Control Tower snapshot ${ts}) and tell me how to run sessions like it better.\n\n## Session\n- Title (first prompt): ${i.title || '(unknown)'}\n- Session id: ${i.sessionId || '?'}\n- Total estimated cost: ${fmtUsdShort(i.total)}${i.spanTxt ? ' · spanned ' + i.spanTxt : ''}\n- Main conversation: ${fmtUsdShort(i.mainCost)} · Workflows: ${fmtUsdShort(i.wfCost)} (${i.wfCount}) · Subagents: ${fmtUsdShort(i.subCost)} (${i.subCount})\n\n### Spend by model\n${models}\n\n### Open-model re-pricing (same tokens, OpenRouter list prices — quality not accounted for)\n${sav}\n` + optimizePromptFooter();
+    return `# Make sessions like this one cheaper and more effective\n\nYou are Claude Code. Analyze this real session of mine (Caliper snapshot ${ts}) and tell me how to run sessions like it better.\n\n## Session\n- Title (first prompt): ${i.title || '(unknown)'}\n- Session id: ${i.sessionId || '?'}\n- Total estimated cost: ${fmtUsdShort(i.total)}${i.spanTxt ? ' · spanned ' + i.spanTxt : ''}\n- Main conversation: ${fmtUsdShort(i.mainCost)} · Workflows: ${fmtUsdShort(i.wfCost)} (${i.wfCount}) · Subagents: ${fmtUsdShort(i.subCost)} (${i.subCount})\n\n### Spend by model\n${models}\n\n### Open-model re-pricing (same tokens, OpenRouter list prices — quality not accounted for)\n${sav}\n` + optimizePromptFooter();
   }
   if (scope === 'workflow') {
     const run = runCache.get(runId);
@@ -3630,7 +3630,7 @@ function buildOptimizePrompt(scope, runId) {
     const phases = (tel.perPhase || []).map((ph) => `- ${ph.phase}: ${ph.calls} calls · ${fmtUsdShort(ph.costUsd)} · wall ${fmtMs(ph.wallMs)}`).join('\n') || '(no phases)';
     const topCalls = [...calls].sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0)).slice(0, 10)
       .map((c) => `- ${c.label || c.id}: ${c.tier || c.model} · ${fmtMs(c.ms)} · ${fmtUsdShort(c.costUsd)} (cache-read ${fmtNshort(c.cacheReadTok || 0)})`).join('\n');
-    return `# Optimize this Claude Code workflow\n\nYou are Claude Code with file access. This workflow run cost ${fmtUsdShort(r.costUsd)} — analyze it and optimize the WORKFLOW SCRIPT itself (Control Tower snapshot ${ts}).\n\n## Run\n- Workflow: ${run.meta?.name || runId} (runId ${runId})\n- Script file (you can read AND edit this): ${scriptPath}\n- ${r.calls || calls.length} agent calls · total ${fmtUsdShort(r.costUsd)} · wall ${fmtMs(r.wallMs)} · naive sum ${fmtMs(r.sumMs)} · speedup ${r.speedup ? r.speedup.toFixed(2) + '×' : '?'}\n\n### Per phase\n${phases}\n\n### Top 10 calls by cost\n${topCalls}\n\n## Specific asks\n- Check each agent() call's model/effort against what its task actually needed (planning/review can justify opus; mechanical work should be sonnet/haiku).\n- Look for calls that could run cheaper, be merged, or be skipped; check whether phases could overlap more (pipeline vs barrier).\n- Show me a diff of the script changes BEFORE applying them.\n` + optimizePromptFooter();
+    return `# Optimize this Claude Code workflow\n\nYou are Claude Code with file access. This workflow run cost ${fmtUsdShort(r.costUsd)} — analyze it and optimize the WORKFLOW SCRIPT itself (Caliper snapshot ${ts}).\n\n## Run\n- Workflow: ${run.meta?.name || runId} (runId ${runId})\n- Script file (you can read AND edit this): ${scriptPath}\n- ${r.calls || calls.length} agent calls · total ${fmtUsdShort(r.costUsd)} · wall ${fmtMs(r.wallMs)} · naive sum ${fmtMs(r.sumMs)} · speedup ${r.speedup ? r.speedup.toFixed(2) + '×' : '?'}\n\n### Per phase\n${phases}\n\n### Top 10 calls by cost\n${topCalls}\n\n## Specific asks\n- Check each agent() call's model/effort against what its task actually needed (planning/review can justify opus; mechanical work should be sonnet/haiku).\n- Look for calls that could run cheaper, be merged, or be skipped; check whether phases could overlap more (pipeline vs barrier).\n- Show me a diff of the script changes BEFORE applying them.\n` + optimizePromptFooter();
   }
   return null;
 }
@@ -3675,10 +3675,10 @@ async function checkForUpdate() {
         const r = await apiFetch('/v1/self-update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         showToast(r.upToDate ? `Updated to v${r.version} — relaunch /control-tower to apply` : 'Pulled — relaunch to apply');
         pill.hidden = true;
-      } catch (err) { showToast('Update failed: ' + err.message + ' — run `claude plugin update workflow-lens`'); }
+      } catch (err) { showToast('Update failed: ' + err.message + ' — run `claude plugin update caliper`'); }
     });
   }
-  pill.innerHTML = `v${esc(v.latest)} available <button class="seg-mini-btn" type="button" data-do-update title="git pull the plugin checkout; then relaunch /control-tower (or run: claude plugin update workflow-lens)">update</button>`;
+  pill.innerHTML = `v${esc(v.latest)} available <button class="seg-mini-btn" type="button" data-do-update title="git pull the plugin checkout; then relaunch /control-tower (or run: claude plugin update caliper)">update</button>`;
   pill.hidden = false;
 }
 checkForUpdate();

@@ -1,6 +1,6 @@
 ---
 name: optimize-spend
-description: Analyze this machine's real Claude Code spend (from the Control Tower data) and produce grounded cost-optimization recommendations — then, with consent, write a personalized cost-discipline skill. Use when the user asks to "optimize my spend", "make Claude cheaper", "analyze my usage costs", "where is my money going", or invokes /optimize-spend.
+description: Analyze this machine's real Claude Code spend (from the Caliper dashboard data) and produce grounded cost-optimization recommendations — then, with consent, write a personalized cost-discipline skill. Use when the user asks to "optimize my spend", "make Claude cheaper", "analyze my usage costs", "where is my money going", or invokes /optimize-spend.
 ---
 
 # Optimize Spend
@@ -9,7 +9,7 @@ Turn the user's real usage data into durable cost discipline. Everything you con
 
 ## 1. Get the data
 
-The Control Tower dashboard reconstructs spend from `~/.claude/projects` transcripts. Prefer its API:
+The Caliper dashboard (this plugin) reconstructs spend from `~/.claude/projects` transcripts. Prefer its API:
 
 1. Find a running server: try `curl -s http://localhost:8787/v1/health`; if that fails, check other ports the launcher may have picked, or start one with this plugin's `scripts/launch-control-tower.mjs` (it prints the URL).
 2. Pull, in order of value:

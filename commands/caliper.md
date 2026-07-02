@@ -1,11 +1,11 @@
 ---
-name: control-tower
-description: Alias of /caliper — launch the Caliper dashboard (auto-pointed at the current session)
+name: caliper
+description: Launch the Caliper dashboard (caliper.run) — see exactly where your Claude Code spend goes (auto-pointed at the current session)
 argument-hint: [--port <n>] [--session-dir <path>]
 allowed-tools: Bash
 ---
 
-Launch the **Control Tower** workflow-visualization dashboard for the user.
+Launch the **Caliper** dashboard for the user (the Control Tower).
 
 Run the bundled launcher **in the background** (it is a long-running server):
 

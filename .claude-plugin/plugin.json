@@ -1,20 +1,21 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
-  "name": "workflow-lens",
-  "version": "0.23.0",
-  "description": "Visualize, instrument, budget, replay, and estimate Claude Code Workflow runs. Ships the workflow-lens CLI plus the Control Tower dashboard, which renders real Workflow runs as graphs, timelines, and cost/token telemetry.",
+  "name": "caliper",
+  "version": "0.24.0",
+  "description": "Caliper \u2014 precision for your AI spend. See exactly where your Claude Code money goes: a local dashboard over your real sessions, workflows, and subagents (cache-aware cost reconstruction, machine-wide analytics), plus an /optimize-spend skill that turns your own usage into cost discipline.",
   "author": {
     "name": "Dennison Bertram"
   },
-  "homepage": "https://github.com/dennisonbertram/workflow-lens",
-  "repository": "https://github.com/dennisonbertram/workflow-lens",
+  "homepage": "https://caliper.run",
+  "repository": "https://github.com/dennisonbertram/caliper",
   "license": "MIT",
   "keywords": [
     "claude-code",
-    "workflow",
-    "observability",
-    "visualization",
     "cost",
+    "spend",
+    "observability",
+    "caliper",
+    "workflow",
     "telemetry"
   ],
   "commands": "./commands",

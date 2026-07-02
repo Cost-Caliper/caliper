@@ -1,15 +1,15 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "workflow-lens",
-  "description": "Claude Code workflow observability — visualize, instrument, and budget Workflow runs.",
+  "name": "caliper",
+  "description": "Caliper \u2014 precision for your AI spend (caliper.run). Local observability + cost optimization for Claude Code.",
   "owner": {
     "name": "Dennison Bertram",
     "url": "https://github.com/dennisonbertram"
   },
   "plugins": [
     {
-      "name": "workflow-lens",
-      "description": "Visualize, instrument, budget, replay, and estimate Claude Code Workflow runs (workflow-lens CLI + Control Tower dashboard).",
+      "name": "caliper",
+      "description": "See exactly where your Claude Code spend goes \u2014 sessions, workflows, subagents, machine-wide analytics \u2014 and copy optimization prompts back into Claude. The first Caliper tool.",
       "category": "development",
       "source": "./"
     }

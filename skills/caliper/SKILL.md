@@ -1,11 +1,11 @@
 ---
-name: workflow-lens
-description: Use when the user wants to visualize, instrument, analyze, budget, replay, or estimate the cost of Claude Code Workflow runs — the single-file `export const meta` + injected-globals format. Triggers include "visualize my workflow", "launch control tower", "show me what that workflow run cost", "graph this workflow", "instrument my workflow", "estimate workflow cost", "why was that workflow slow", or "replay a workflow without spending tokens".
+name: caliper
+description: Caliper (caliper.run) — use when the user wants to see where their Claude Code spend goes, visualize sessions/workflows/subagents, launch the Caliper dashboard, or instrument/replay/estimate Workflow runs — the single-file `export const meta` + injected-globals format. Triggers include "visualize my workflow", "launch caliper", "launch control tower", "show me what that workflow run cost", "graph this workflow", "instrument my workflow", "estimate workflow cost", "why was that workflow slow", or "replay a workflow without spending tokens".
 version: 0.1.0
 user_invocable: true
 ---
 
-# workflow-lens
+# Caliper (workflow-lens tools)
 
 Two tools for seeing inside Claude Code `Workflow` runs:
 
