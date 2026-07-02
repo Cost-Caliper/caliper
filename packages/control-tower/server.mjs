@@ -67,7 +67,7 @@ async function checkVersion() {
   let latest = null
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3500)
-    const r = await fetch('https://raw.githubusercontent.com/dennisonbertram/caliper/main/.claude-plugin/plugin.json', { signal: ctl.signal })
+    const r = await fetch('https://raw.githubusercontent.com/Cost-Caliper/caliper/main/.claude-plugin/plugin.json', { signal: ctl.signal })
     clearTimeout(t)
     if (r.ok) latest = (await r.json()).version || null
   } catch { /* offline — fail soft */ }

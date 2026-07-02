@@ -21,7 +21,7 @@ custom models fine-tuned on your own usage — see [caliper.run](https://caliper
 ## Install
 
 ```sh
-/plugin marketplace add dennisonbertram/caliper
+/plugin marketplace add Cost-Caliper/caliper
 /plugin install caliper@caliper
 ```
 
@@ -35,7 +35,7 @@ The plugin was renamed. Once per machine:
 
 ```sh
 /plugin marketplace remove workflow-lens
-/plugin marketplace add dennisonbertram/caliper
+/plugin marketplace add Cost-Caliper/caliper
 /plugin install caliper@caliper
 ```
 
@@ -56,7 +56,7 @@ them under `packages/` preserves every relative import unchanged.
 
 ```sh
 # Add this repo as a marketplace, then install the plugin
-/plugin marketplace add dennisonbertram/caliper
+/plugin marketplace add Cost-Caliper/caliper
 /plugin install caliper@caliper
 ```
 

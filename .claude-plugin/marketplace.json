@@ -3,8 +3,8 @@
   "name": "caliper",
   "description": "Caliper \u2014 precision for your AI spend (caliper.run). Local observability + cost optimization for Claude Code.",
   "owner": {
-    "name": "Dennison Bertram",
-    "url": "https://github.com/dennisonbertram"
+    "name": "Caliper (caliper.run)",
+    "url": "https://github.com/Cost-Caliper"
   },
   "plugins": [
     {
