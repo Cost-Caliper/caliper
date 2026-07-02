@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "caliper",
-  "version": "0.24.1",
+  "version": "0.24.2",
   "description": "Caliper \u2014 precision for your AI spend. See exactly where your Claude Code money goes: a local dashboard over your real sessions, workflows, and subagents (cache-aware cost reconstruction, machine-wide analytics), plus an /optimize-spend skill that turns your own usage into cost discipline.",
   "author": {
     "name": "Dennison Bertram"

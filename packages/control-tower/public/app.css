@@ -1669,3 +1669,9 @@ select.input {
 .opt-modal-pre { margin: 0; padding: 14px 16px; overflow: auto; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; color: var(--gray-1000); font-family: var(--font-mono); }
 /* Update pill */
 .update-pill { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); border-radius: 999px; padding: 3px 10px; }
+
+/* caliper.run brand wordmark (matches the site: mono, tight tracking) */
+a.brand { text-decoration: none; }
+.brand-wordmark { font-family: var(--font-mono); letter-spacing: -0.02em; font-weight: 500; }
+/* dark-mode blue aligned to the brand token (#006bff, same as light) */
+[data-theme="dark"] { --blue: #006bff; }

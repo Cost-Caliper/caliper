@@ -4,16 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Caliper — precision for your AI spend</title>
+  <link rel="icon" href="/icon-light-32x32.png" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="/icon-dark-32x32.png" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 
 <!-- ── Sticky header ─────────────────────────────────────────────────────────── -->
 <header class="app-header" role="banner">
-  <div class="brand">
-    <span class="brand-name">Caliper</span>
-    <span class="brand-sub">caliper.run — see exactly where your AI spend goes</span>
-  </div>
+  <a class="brand" href="https://caliper.run" target="_blank" rel="noopener">
+    <span class="brand-name brand-wordmark">caliper.run</span>
+    <span class="brand-sub">precision for your AI spend</span>
+  </a>
 
   <div class="header-controls">
     <!-- Workflow picker -->
@@ -472,8 +474,8 @@
       billing API — invoiced cost may differ.
     </p>
     <div class="footer-meta">
-      <span>Control Tower</span>
-      <span class="muted"> · workflow-lens</span>
+      <a href="https://caliper.run" target="_blank" rel="noopener" class="brand-wordmark" style="color:var(--gray-1000);text-decoration:none">caliper.run</a>
+      <span class="muted"> · open source · local · yours</span>
     </div>
   </div>
 </footer>
