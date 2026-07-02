@@ -6,8 +6,9 @@
 // the subagents view uses, so cost/tokens/turns are consistent across the app.
 // Summaries are cached by (mtime, size) — a big project re-lists instantly.
 
-import { readdirSync, statSync, existsSync, openSync, readSync, closeSync } from 'node:fs'
+import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
 import { parseAgentTranscript } from './observer.mjs'
 import { costOfUsage, tierFromModel } from './observe-cost.mjs'
 
@@ -15,6 +16,33 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const SESSION_FILE_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
 
 const summaryCache = new Map() // absolute jsonl path -> { mtimeMs, size, summary }
+
+// ── Disk-backed summary cache ─────────────────────────────────────────────────
+// Machine-wide aggregation summarizes EVERY session once (multi-GB of transcripts) —
+// persisting summaries makes that a one-time cost across restarts. Versioned: bump
+// CACHE_VERSION whenever the cost model or summary shape changes (v2 = TTL-bucketed
+// cache pricing + requestId dedup of 2026-07-01).
+const CACHE_VERSION = 2
+const CACHE_FILE = join(homedir() || tmpdir(), '.cache', 'workflow-lens', `session-summaries-v${CACHE_VERSION}.json`)
+let diskCacheLoaded = false
+let unsavedSummaries = 0
+function loadDiskCache() {
+  if (diskCacheLoaded) return
+  diskCacheLoaded = true
+  try {
+    const raw = JSON.parse(readFileSync(CACHE_FILE, 'utf8'))
+    for (const [path, entry] of Object.entries(raw)) if (!summaryCache.has(path)) summaryCache.set(path, entry)
+  } catch { /* first run / unreadable — fine */ }
+}
+export function saveDiskCache() {
+  try {
+    mkdirSync(join(homedir() || tmpdir(), '.cache', 'workflow-lens'), { recursive: true })
+    const tmp = CACHE_FILE + '.tmp'
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(summaryCache)))
+    renameSync(tmp, CACHE_FILE)
+    unsavedSummaries = 0
+  } catch { /* cache is best-effort */ }
+}
 
 const trunc = (s, n) => (s == null ? null : String(s).length > n ? String(s).slice(0, n) + '…' : String(s))
 
@@ -42,6 +70,7 @@ function countDir(dir, re) {
 // null for invalid ids (path-traversal guard) or missing transcripts.
 export function summarizeSessionFile(projectDir, id) {
   if (!SESSION_ID_RE.test(String(id))) return null
+  loadDiskCache()
   const path = join(projectDir, `${id}.jsonl`)
   let st
   try { st = statSync(path) } catch { return null }
@@ -79,7 +108,71 @@ export function summarizeSessionFile(projectDir, id) {
     mtimeMs: st.mtimeMs,
   }
   summaryCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, summary })
+  if (++unsavedSummaries >= 200) saveDiskCache() // checkpoint long scans
   return summary
+}
+
+// ── Machine-wide aggregation (incremental, disk-cached) ───────────────────────
+// Scans EVERY session in EVERY folder, but only up to `budgetMs` per call — callers
+// poll until `done`. Summaries are mtime-cached (memory + disk), so the first scan
+// pays the parse cost once and later calls are effectively instant.
+let aggState = null
+export function resetAggregateScan() { aggState = null }
+function repoOfCwd(cwd) {
+  const m = String(cwd || '').match(/\/conductor\/workspaces\/([^/]+)\/[^/]+\/?$/)
+  if (m) return m[1] + ' (worktrees)'
+  return String(cwd || '').split('/').filter(Boolean).pop() || String(cwd || 'unknown')
+}
+export function aggregateMachine(projectsRoot, { budgetMs = 1500 } = {}) {
+  if (!aggState || aggState.root !== projectsRoot) {
+    const queue = []
+    for (const p of listProjects(projectsRoot)) {
+      let files = []
+      try { files = readdirSync(p.dir).filter((f) => SESSION_FILE_RE.test(f)) } catch { /* unreadable */ }
+      for (const f of files) queue.push({ dir: p.dir, id: f.replace(/\.jsonl$/, ''), cwd: p.cwd || p.slug })
+    }
+    aggState = {
+      root: projectsRoot, queue, idx: 0,
+      totals: { sessions: 0, costUsd: 0, tokens: { in: 0, out: 0, cacheRd: 0, cacheWr: 0 }, folders: new Set() },
+      byDay: new Map(), byRepo: new Map(), byTier: new Map(),
+    }
+  }
+  const s = aggState
+  const t0 = Date.now()
+  while (s.idx < s.queue.length && Date.now() - t0 < budgetMs) {
+    const item = s.queue[s.idx++]
+    const sum = summarizeSessionFile(item.dir, item.id)
+    if (!sum) continue
+    s.totals.sessions++
+    s.totals.costUsd += sum.costUsd || 0
+    s.totals.tokens.in += sum.tokens?.in || 0
+    s.totals.tokens.out += sum.tokens?.out || 0
+    s.totals.tokens.cacheRd += sum.tokens?.cacheRd || 0
+    s.totals.tokens.cacheWr += sum.tokens?.cacheWr || 0
+    s.totals.folders.add(item.dir)
+    const ms = sum.startedAt ? Date.parse(sum.startedAt) : sum.mtimeMs
+    if (ms) {
+      const d = new Date(ms); const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const b = s.byDay.get(day) || { day, costUsd: 0, sessions: 0 }
+      b.costUsd += sum.costUsd || 0; b.sessions++; s.byDay.set(day, b)
+    }
+    const repo = repoOfCwd(sum.cwd || item.cwd)
+    const r = s.byRepo.get(repo) || { repo, costUsd: 0, sessions: 0 }
+    r.costUsd += sum.costUsd || 0; r.sessions++; s.byRepo.set(repo, r)
+    const tier = sum.tier || 'other'
+    s.byTier.set(tier, (s.byTier.get(tier) || 0) + (sum.costUsd || 0))
+  }
+  const done = s.idx >= s.queue.length
+  if (done && unsavedSummaries > 0) saveDiskCache()
+  const round = (x) => +x.toFixed(6)
+  return {
+    done,
+    progress: { scannedSessions: s.idx, totalSessions: s.queue.length },
+    totals: { sessions: s.totals.sessions, folders: s.totals.folders.size, costUsd: round(s.totals.costUsd), tokens: { ...s.totals.tokens } },
+    byDay: [...s.byDay.values()].sort((a, b) => a.day < b.day ? -1 : 1).map((d) => ({ ...d, costUsd: round(d.costUsd) })),
+    byRepo: [...s.byRepo.values()].sort((a, b) => b.costUsd - a.costUsd).map((r) => ({ ...r, costUsd: round(r.costUsd) })),
+    byTier: [...s.byTier.entries()].map(([tier, costUsd]) => ({ tier, costUsd: round(costUsd) })).sort((a, b) => b.costUsd - a.costUsd),
+  }
 }
 
 // Read a transcript's `cwd` field cheaply: scan only the first few lines — every harness

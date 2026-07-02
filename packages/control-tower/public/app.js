@@ -3154,6 +3154,23 @@ function sessDayLabel(ms) {
   return d.toLocaleDateString(undefined, opts);
 }
 function sessClock(ms) { return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }); }
+let sessionsSort = 'date'; // 'date' (day groups) | 'cost' (flat, most expensive first)
+function sessRowHtml(s, activeId, isEmpty) {
+  const badges = [];
+  if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+  if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  const activePill = s.id === activeId ? '<span class="sess-active-pill" title="This is the session the Active Session / Workflows / Subagents tabs are currently showing">active</span>' : '';
+  const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
+  const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
+  return `<button class="sess-row${ghost}" type="button" data-session-id="${esc(s.id)}" title="${esc(s.id)}${s.cwd ? ' · ' + esc(s.cwd) : ''}">`
+    + `<span class="sess-time mono">${s._ms ? (sessionsSort === 'cost' ? sessDayLabel(s._ms) + ' ' : '') + sessClock(s._ms) : '—'}</span>`
+    + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 96))}${activePill}${livePill}</span>`
+    + `<span class="sess-badges">${badges.join('')}</span>`
+    + `<span class="sess-dur mono muted">${s.ms ? fmtMs(s.ms) : '—'}</span>`
+    + `<span class="sess-turns mono muted" title="assistant turns">${fmtN(s.turns)}t</span>`
+    + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — the conversation's own cost (workflow/subagent spend not included; open the session for the full total)">${fmtUsdShort(s.costUsd)}</span>`
+    + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
+}
 function renderSessionsList() {
   const list = document.getElementById('sessions-list'); if (!list || !sessionsData) return;
   const all = sessionsData.sessions || [];
@@ -3217,6 +3234,8 @@ async function selectSession(id) {
   setTab('session'); // Active Session tab reloads everything from the newly-selected session
 }
 document.getElementById('sessions-list')?.addEventListener('click', (e) => {
+  const srt = e.target.closest('[data-sessions-sort]');
+  if (srt) { sessionsSort = srt.getAttribute('data-sessions-sort'); renderSessionsList(); return; }
   const tgl = e.target.closest('#sess-empty-toggle');
   if (tgl) { showEmptySessions = !showEmptySessions; renderSessionsList(); return; }
   const row = e.target.closest('[data-session-id]');
