@@ -55,6 +55,32 @@ if (SESS) {
 }
 console.log(`[bridge] projects root (folder browser): ${PROJECTS_ROOT}`)
 
+// ── Version / update check ────────────────────────────────────────────────────
+const REPO_ROOT = join(__dir, '..', '..')
+function localVersion() {
+  try { return JSON.parse(readFileSync(join(REPO_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version || null } catch { return null }
+}
+let versionCache = null // { at, payload }
+async function checkVersion() {
+  if (versionCache && Date.now() - versionCache.at < 3600_000) return versionCache.payload
+  const current = localVersion()
+  let latest = null
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3500)
+    const r = await fetch('https://raw.githubusercontent.com/dennisonbertram/workflow-lens/main/.claude-plugin/plugin.json', { signal: ctl.signal })
+    clearTimeout(t)
+    if (r.ok) latest = (await r.json()).version || null
+  } catch { /* offline — fail soft */ }
+  const cmp = (a, b) => { // semver-ish compare: 1 if a > b
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number)
+    for (let i = 0; i < 3; i++) { if ((pa[i] || 0) > (pb[i] || 0)) return 1; if ((pa[i] || 0) < (pb[i] || 0)) return -1 }
+    return 0
+  }
+  const payload = { current, latest, updateAvailable: !!(current && latest && cmp(latest, current) > 0), checkedAt: Date.now() }
+  versionCache = { at: Date.now(), payload }
+  return payload
+}
+
 // In-memory beacon store: stores beacons by both runId and instrumentationId
 // so the observer can correlate without knowing the runId.
 //   beaconByRunId: runId -> [{ev, ...}]
@@ -201,6 +227,26 @@ async function handle(req, res) {
     const u = new URL(url, 'http://x')
     if (u.searchParams.get('restart') === '1') resetAggregateScan()
     jsonOk(res, aggregateMachine(PROJECTS_ROOT, { budgetMs: Math.min(4000, parseInt(u.searchParams.get('budgetMs') || '1500', 10) || 1500) }))
+    return
+  }
+
+  // ── GET /v1/version — local plugin version + GitHub update check (cached 1h) ──
+  if (method === 'GET' && urlPath === '/v1/version') {
+    jsonOk(res, await checkVersion())
+    return
+  }
+
+  // ── POST /v1/self-update — git pull the plugin checkout (local, single-user) ──
+  if (method === 'POST' && urlPath === '/v1/self-update') {
+    try {
+      const { execFileSync } = await import('node:child_process')
+      const out = execFileSync('git', ['-C', REPO_ROOT, 'pull', '--ff-only'], { encoding: 'utf8', timeout: 30000 })
+      versionCache = null // re-check after pulling
+      const v = await checkVersion()
+      jsonOk(res, { ok: true, output: out.trim().slice(0, 500), version: v.current, upToDate: !v.updateAvailable, note: 'Restart the Control Tower server (relaunch /control-tower) to run the new version.' })
+    } catch (e) {
+      jsonErr(res, 'UPDATE_FAILED', String(e.message || e).slice(0, 300), 500)
+    }
     return
   }
 

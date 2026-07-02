@@ -1593,7 +1593,8 @@ function buildDetailHtml(run) {
   // detail leads with a link to the workflow's source (the script the harness ran).
   const wfName = esc(run.meta?.name || run.runId || '');
   const wfPathTitle = run.scriptPath ? `Workflow file: ${run.scriptPath} — click to view source` : 'View the workflow script that produced this run';
-  const sourceLink = `<div class="obs-detail-context"><span class="wf-source-link" data-script="${esc(run.runId)}" title="${esc(wfPathTitle)}">📄 ${wfName} — view workflow source</span></div>`;
+  const sourceLink = `<div class="obs-detail-context"><span class="wf-source-link" data-script="${esc(run.runId)}" title="${esc(wfPathTitle)}">📄 ${wfName} — view workflow source</span>`
+    + ` <span class="opt-copy"><button class="seg-mini-btn opt-btn" type="button" data-copy-optimize="workflow" data-optimize-run="${esc(run.runId)}" title="Copy a prompt asking Claude Code to optimize THIS workflow (it can edit the script file directly)">⧉ copy optimization prompt</button><button class="opt-view" type="button" data-view-optimize="workflow" data-optimize-run="${esc(run.runId)}">view</button></span></div>`;
 
   const stat = (n, label, desc) => `<div class="stat-card" title="${esc(desc)}"><div class="stat-n">${n}</div><div class="stat-label">${label}</div></div>`;
   const cards = '<div class="stat-cards stat-cards-sm">'
@@ -2814,12 +2815,14 @@ function renderSessionInsight(workflows, sub, wfDetails) {
       + `</div></details>`;
   }
 
+  lastInsightSummary = { total, mainCost, wfCost, subCost, wfCount, subCount, modelTotals, savings, usage, spanTxt, title: stripTitleCache, sessionId: currentSessionId };
   host.innerHTML = `<div class="session-insight-card">`
     + `<div class="si-headline">${headline}</div>`
     + `<div class="si-chips">${chips}</div>`
     + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${speedLine}${rows}${more}</div>`
     + savePanel
-    + `<div class="si-foot muted">$ = cache-aware <em>estimate</em>, not billed · bars split by model · shares are of the items shown here · click a bar to open it</div>`
+    + `<div class="si-foot muted">$ = cache-aware <em>estimate</em>, not billed · bars split by model · shares are of the items shown here · click a bar to open it`
+    + ` · <span class="opt-copy"><button class="seg-mini-btn opt-btn" type="button" data-copy-optimize="session" title="Copy a prompt asking Claude Code to make sessions like this cheaper/better">⧉ copy optimization prompt</button><button class="opt-view" type="button" data-view-optimize="session">view</button></span></div>`
     + method
     + `</div>`;
 }
@@ -3491,7 +3494,9 @@ function svgDailyChart(byDay) {
   }).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto" role="img" aria-label="Daily spend by model, last ${days.length} days">${grid}${bars}</svg>`;
 }
+let lastAggData = null;
 function renderAggregate(a) {
+  lastAggData = a;
   const el = document.getElementById('home-agg'); if (!el) return;
   const t = a.totals;
   const prog = a.done ? '' : `<span class="muted" style="font-size:11px;margin-left:10px">scanning… ${fmtN(a.progress.scannedSessions)}/${fmtN(a.progress.totalSessions)} sessions</span>`;
@@ -3515,7 +3520,9 @@ function renderAggregate(a) {
   const tierTotal = a.byTier.reduce((x, y) => x + y.costUsd, 0) || 1;
   const tierSegs = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-seg" style="flex:${x.costUsd.toFixed(4)};background:${modelColor(x.tier)}" title="${x.tier} · ${fmtUsdShort(x.costUsd)} (${Math.round(x.costUsd / tierTotal * 100)}%)"></span>`).join('');
   const tierLegend = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(x.tier)}"></span>${x.tier} ${fmtUsdShort(x.costUsd)}</span>`).join(' ');
-  el.innerHTML = `<div class="home-sect">This machine — all folders, all time${prog}</div>`
+  el.innerHTML = `<div class="home-sect">This machine — all folders, all time${prog}`
+    + `<span class="opt-copy"><button class="seg-mini-btn opt-btn" type="button" data-copy-optimize="machine" title="Copy a ready-to-paste prompt that asks Claude Code to analyze this spend and write a cost-discipline skill">⧉ copy optimization prompt</button>`
+    + `<button class="opt-view" type="button" data-view-optimize="machine">view</button></span></div>`
     + chips
     + `<div class="agg-charts">`
     + `<div class="agg-chart"><div class="agg-chart-title">Daily spend — last 30 active days</div>${svgDailyChart(a.byDay)}</div>`
@@ -3570,6 +3577,111 @@ document.getElementById('home-body')?.addEventListener('click', async (e) => {
 });
 document.getElementById('home-refresh')?.addEventListener('click', () => loadHome());
 document.querySelectorAll('.tabbar-btn, .subtab-btn').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+// ── "Copy optimization prompt" — the feedback loop back into Claude Code ──────
+// Packages evidence + file/API pointers + a task, so the Claude that receives it
+// can analyze real spend and (with consent) write a personalized cost skill.
+let lastInsightSummary = null;
+function showToast(msg) {
+  let t = document.getElementById('ct-toast');
+  if (!t) { t = document.createElement('div'); t.id = 'ct-toast'; t.className = 'ct-toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(showToast._t); showToast._t = setTimeout(() => t.classList.remove('show'), 2600);
+}
+function optimizePromptFooter() {
+  return `\n## How to work\n`
+    + `1. Ground every conclusion in the numbers above (or fetch more via the live API below).\n`
+    + `2. Identify the 3-5 biggest cost levers you can actually change (model tier per task type, delegation to cheaper subagents, workflow model mix, prompt/cache stability, avoiding re-reading the same files).\n`
+    + `3. Propose concrete changes with expected impact, clearly labeled as estimates.\n`
+    + `4. Then OFFER (ask first) to write a personalized cost-discipline skill to ~/.claude/skills/cost-discipline/SKILL.md capturing the durable rules you found — rules grounded in MY observed usage, not generic advice.\n`
+    + `\n## Live data API (while the Control Tower dashboard is running)\n`
+    + `- ${location.origin}/v1/aggregate — machine-wide totals, by-day/by-repo/by-tier\n`
+    + `- ${location.origin}/v1/sessions/all — every session with costs\n`
+    + `- ${location.origin}/v1/observed and /v1/observed/:id — workflow runs with per-call telemetry\n`
+    + `If the API is unreachable, use the snapshot above — it is sufficient.\n`
+    + `\n## Honesty requirements\n`
+    + `- All dollar figures are cache-aware ESTIMATES reconstructed from transcripts (input×in + cache_write_5m×in×1.25 + cache_write_1h×in×2.0 + cache_read×in×0.10 + output×out at per-model rates), not billed amounts. Say so when you cite them.\n`
+    + `- Note sample sizes; do not overfit rules to a single session.\n`
+    + `- Cheaper models may need more attempts — present savings as token-economics ceilings, not promises.\n`;
+}
+function buildOptimizePrompt(scope, runId) {
+  const ts = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  if (scope === 'machine') {
+    const a = lastAggData;
+    if (!a) return null;
+    const t = a.totals;
+    const tiers = a.byTier.map((x) => `- ${x.tier}: ${fmtUsdShort(x.costUsd)}`).join('\n');
+    const repos = a.byRepo.slice(0, 8).map((r) => `- ${r.repo}: ${fmtUsdShort(r.costUsd)} across ${r.sessions} sessions`).join('\n');
+    const cacheRatio = t.tokens.in > 0 ? Math.round(t.tokens.cacheRd / (t.tokens.cacheRd + t.tokens.in) * 100) : 0;
+    return `# Optimize my Claude Code spend (machine-wide)\n\nYou are Claude Code running on my machine. Below is my real usage, reconstructed from ~/.claude/projects transcripts by the Control Tower dashboard (snapshot ${ts}).\n\n## Snapshot — all folders, all time\n- Total estimated spend: ${fmtUsdShort(t.costUsd)} across ${fmtN(t.sessions)} sessions in ${fmtN(t.folders)} folders (${a.done ? 'complete scan' : 'partial scan: ' + a.progress.scannedSessions + '/' + a.progress.totalSessions}).\n- Tokens: ${fmtNshort(t.tokens.out)} output · ${fmtNshort(t.tokens.in)} fresh input · ${fmtNshort(t.tokens.cacheRd)} cache reads (${cacheRatio}% of input context came from cache) · ${fmtNshort(t.tokens.cacheWr)} cache writes.\n\n### Spend by model tier\n${tiers}\n\n### Top repos by spend\n${repos}\n` + optimizePromptFooter();
+  }
+  if (scope === 'session') {
+    const i = lastInsightSummary;
+    if (!i) return null;
+    const models = MODEL_ORDER.filter((m) => i.modelTotals[m]).map((m) => `- ${m}: ${fmtUsdShort(i.modelTotals[m])}`).join('\n');
+    const sav = i.savings ? i.savings.lines.map((l) => `- ${l.tier} → ${l.sub.name}: ${fmtUsdShort(l.cur)} → ${fmtUsdShort(l.subCost)}`).join('\n') : '(not computed)';
+    return `# Make sessions like this one cheaper and more effective\n\nYou are Claude Code. Analyze this real session of mine (Control Tower snapshot ${ts}) and tell me how to run sessions like it better.\n\n## Session\n- Title (first prompt): ${i.title || '(unknown)'}\n- Session id: ${i.sessionId || '?'}\n- Total estimated cost: ${fmtUsdShort(i.total)}${i.spanTxt ? ' · spanned ' + i.spanTxt : ''}\n- Main conversation: ${fmtUsdShort(i.mainCost)} · Workflows: ${fmtUsdShort(i.wfCost)} (${i.wfCount}) · Subagents: ${fmtUsdShort(i.subCost)} (${i.subCount})\n\n### Spend by model\n${models}\n\n### Open-model re-pricing (same tokens, OpenRouter list prices — quality not accounted for)\n${sav}\n` + optimizePromptFooter();
+  }
+  if (scope === 'workflow') {
+    const run = runCache.get(runId);
+    if (!run) return null;
+    const tel = run.telemetry || {}; const r = tel.run || {}; const calls = tel.calls || [];
+    const scriptPath = run.meta?.scriptPath || run.scriptPath || '(unknown — fetch ' + location.origin + '/v1/observed/' + runId + '/script)';
+    const phases = (tel.perPhase || []).map((ph) => `- ${ph.phase}: ${ph.calls} calls · ${fmtUsdShort(ph.costUsd)} · wall ${fmtMs(ph.wallMs)}`).join('\n') || '(no phases)';
+    const topCalls = [...calls].sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0)).slice(0, 10)
+      .map((c) => `- ${c.label || c.id}: ${c.tier || c.model} · ${fmtMs(c.ms)} · ${fmtUsdShort(c.costUsd)} (cache-read ${fmtNshort(c.cacheReadTok || 0)})`).join('\n');
+    return `# Optimize this Claude Code workflow\n\nYou are Claude Code with file access. This workflow run cost ${fmtUsdShort(r.costUsd)} — analyze it and optimize the WORKFLOW SCRIPT itself (Control Tower snapshot ${ts}).\n\n## Run\n- Workflow: ${run.meta?.name || runId} (runId ${runId})\n- Script file (you can read AND edit this): ${scriptPath}\n- ${r.calls || calls.length} agent calls · total ${fmtUsdShort(r.costUsd)} · wall ${fmtMs(r.wallMs)} · naive sum ${fmtMs(r.sumMs)} · speedup ${r.speedup ? r.speedup.toFixed(2) + '×' : '?'}\n\n### Per phase\n${phases}\n\n### Top 10 calls by cost\n${topCalls}\n\n## Specific asks\n- Check each agent() call's model/effort against what its task actually needed (planning/review can justify opus; mechanical work should be sonnet/haiku).\n- Look for calls that could run cheaper, be merged, or be skipped; check whether phases could overlap more (pipeline vs barrier).\n- Show me a diff of the script changes BEFORE applying them.\n` + optimizePromptFooter();
+  }
+  return null;
+}
+function showPromptModal(text) {
+  let m = document.getElementById('opt-modal');
+  if (!m) {
+    m = document.createElement('div'); m.id = 'opt-modal'; m.className = 'opt-modal'; m.hidden = true;
+    m.innerHTML = '<div class="opt-modal-box"><div class="opt-modal-head"><span>Optimization prompt — paste into Claude Code</span><span style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-secondary btn-sm" type="button" id="opt-modal-copy">Copy</button><button class="btn btn-tertiary btn-sm" type="button" id="opt-modal-close">Close</button></span></div><pre class="opt-modal-pre" id="opt-modal-pre"></pre></div>';
+    document.body.appendChild(m);
+    m.addEventListener('click', (e) => { if (e.target === m || e.target.id === 'opt-modal-close') m.hidden = true; });
+    m.querySelector('#opt-modal-copy').addEventListener('click', () => { navigator.clipboard.writeText(document.getElementById('opt-modal-pre').textContent).then(() => showToast('Copied — paste into Claude Code')); });
+  }
+  document.getElementById('opt-modal-pre').textContent = text;
+  m.hidden = false;
+}
+document.addEventListener('click', (e) => {
+  const copyBtn = e.target.closest('[data-copy-optimize]');
+  const viewBtn = e.target.closest('[data-view-optimize]');
+  if (!copyBtn && !viewBtn) return;
+  const el = copyBtn || viewBtn;
+  const scope = el.getAttribute(copyBtn ? 'data-copy-optimize' : 'data-view-optimize');
+  const text = buildOptimizePrompt(scope, el.getAttribute('data-optimize-run'));
+  if (!text) { showToast('Data still loading — try again in a moment'); return; }
+  if (copyBtn) navigator.clipboard.writeText(text).then(() => showToast('Copied — paste into Claude Code'), () => showPromptModal(text));
+  else showPromptModal(text);
+});
+
+// ── Update check: compare local plugin version to GitHub main ─────────────────
+async function checkForUpdate() {
+  let v = null;
+  try { v = await apiFetch('/v1/version'); } catch { return; }
+  const bar = document.querySelector('.crumb-bar'); if (!bar || !v) return;
+  let pill = document.getElementById('update-pill');
+  if (!v.updateAvailable) { if (pill) pill.hidden = true; return; }
+  if (!pill) {
+    pill = document.createElement('span'); pill.id = 'update-pill'; pill.className = 'update-pill';
+    bar.appendChild(pill);
+    pill.addEventListener('click', async (e) => {
+      if (!e.target.closest('[data-do-update]')) return;
+      showToast('Updating…');
+      try {
+        const r = await apiFetch('/v1/self-update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        showToast(r.upToDate ? `Updated to v${r.version} — relaunch /control-tower to apply` : 'Pulled — relaunch to apply');
+        pill.hidden = true;
+      } catch (err) { showToast('Update failed: ' + err.message + ' — run `claude plugin update workflow-lens`'); }
+    });
+  }
+  pill.innerHTML = `v${esc(v.latest)} available <button class="seg-mini-btn" type="button" data-do-update title="git pull the plugin checkout; then relaunch /control-tower (or run: claude plugin update workflow-lens)">update</button>`;
+  pill.hidden = false;
+}
+checkForUpdate();
 
 init();
 // Deep-link support: #/tab/sessionId/agentId restores the exact spot; else land on Sessions.
