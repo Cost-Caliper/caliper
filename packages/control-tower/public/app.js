@@ -3356,6 +3356,23 @@ document.getElementById('nav-crumbs')?.addEventListener('click', (e) => {
   const c = e.target.closest('[data-nav-tab]'); if (c) setTab(c.getAttribute('data-nav-tab'));
 });
 
+// Shared cursor-following tooltip for chart hover (native <title> is slow + clips).
+const chartTip = (() => {
+  const el = document.createElement('div');
+  el.className = 'chart-tip'; el.hidden = true;
+  document.body.appendChild(el);
+  document.addEventListener('mousemove', (e) => {
+    const t = e.target.closest && e.target.closest('[data-tip]');
+    if (!t) { el.hidden = true; return; }
+    el.textContent = t.getAttribute('data-tip');
+    el.hidden = false;
+    const x = Math.min(e.clientX + 14, window.innerWidth - el.offsetWidth - 8);
+    const y = Math.min(e.clientY + 14, window.innerHeight - el.offsetHeight - 8);
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+  });
+  return el;
+})();
+
 // ── Home dashboard: everything Claude Code has done on this machine ───────────
 function homeSessRowHtml(s) {
   const badges = [];
@@ -3443,28 +3460,36 @@ async function pollAggregate(restart = false) {
 function svgDailyChart(byDay) {
   const days = byDay.slice(-30);
   if (!days.length) return '';
-  const W = 920, H = 120, pad = 4, bw = Math.max(6, Math.floor((W - pad * 2) / days.length) - 3);
-  const max = Math.max(...days.map((d) => d.costUsd), 0.01);
+  const AX = 46, W = 920, H = 130, top = 8, bottom = 16;
+  const plotH = H - top - bottom;
+  const bw = Math.max(6, Math.floor((W - AX - 8) / days.length) - 3);
+  const rawMax = Math.max(...days.map((d) => d.costUsd), 0.01);
+  // Nice axis max on a 1-2-5 scale so gridline labels are round dollars.
+  const pow = Math.pow(10, Math.floor(Math.log10(rawMax)));
+  const max = [1, 2, 5, 10].map((m) => m * pow).find((m) => m >= rawMax) || rawMax;
+  const yOf = (v) => top + plotH - (v / max) * plotH;
+  const grid = [0, max / 2, max].map((v) => `<line x1="${AX}" x2="${W - 4}" y1="${yOf(v).toFixed(1)}" y2="${yOf(v).toFixed(1)}" stroke="var(--border)" stroke-width="1"/>`
+    + `<text x="${AX - 6}" y="${(yOf(v) + 3).toFixed(1)}" text-anchor="end" style="font-size:8.5px;fill:var(--gray-700)">${v === 0 ? '$0' : fmtUsdShort(v)}</text>`).join('');
   const bars = days.map((d, i) => {
-    const x = pad + i * (bw + 3);
-    const totalH = Math.max(1, Math.round((d.costUsd / max) * (H - 26)));
+    const x = AX + 4 + i * (bw + 3);
+    const totalH = Math.max(1, Math.round((d.costUsd / max) * plotH));
     const tierTxt = MODEL_ORDER.filter((t) => d.tiers && d.tiers[t]).map((t) => `${t} ${fmtUsdShort(d.tiers[t])}`).join(' · ');
-    const title = `<title>${d.day} · ${fmtUsdShort(d.costUsd)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}${tierTxt ? ' — ' + tierTxt : ''}</title>`;
+    const tip = `${d.day} · ${fmtUsdShort(d.costUsd)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}${tierTxt ? ' — ' + tierTxt : ''}`;
     // Stacked by model tier (bottom-up in MODEL_ORDER)
-    let segs = '', yCur = H - 16;
+    let segs = '', yCur = H - bottom;
     if (d.tiers && d.costUsd > 0) {
       for (const t of [...MODEL_ORDER].reverse()) {
         const c = d.tiers[t]; if (!c) continue;
         const h = Math.max(1, Math.round((c / d.costUsd) * totalH));
         yCur -= h;
-        segs += `<rect x="${x}" y="${yCur}" width="${bw}" height="${h}" fill="${modelColor(t)}" opacity="0.85">${title}</rect>`;
+        segs += `<rect data-tip="${esc(tip)}" aria-label="${esc(tip)}" x="${x}" y="${yCur}" width="${bw}" height="${h}" fill="${modelColor(t)}" opacity="0.85"/>`;
       }
     } else {
-      segs = `<rect x="${x}" y="${H - 16 - totalH}" width="${bw}" height="${totalH}" rx="2" fill="var(--blue)" opacity="0.75">${title}</rect>`;
+      segs = `<rect data-tip="${esc(tip)}" aria-label="${esc(tip)}" x="${x}" y="${H - bottom - totalH}" width="${bw}" height="${totalH}" rx="2" fill="var(--blue)" opacity="0.75"/>`;
     }
     return segs + (i % 5 === 0 ? `<text x="${x}" y="${H - 4}" style="font-size:8.5px;fill:var(--gray-700)">${d.day.slice(5)}</text>` : '');
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto" role="img" aria-label="Daily spend by model, last ${days.length} days">${bars}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto" role="img" aria-label="Daily spend by model, last ${days.length} days">${grid}${bars}</svg>`;
 }
 function renderAggregate(a) {
   const el = document.getElementById('home-agg'); if (!el) return;
@@ -3482,10 +3507,10 @@ function renderAggregate(a) {
     const segs = (r.tiers && r.costUsd > 0)
       ? MODEL_ORDER.filter((t) => r.tiers[t]).map((t) => `<span class="si-seg" style="flex:${r.tiers[t].toFixed(4)};background:${modelColor(t)}" title="${t} · ${fmtUsdShort(r.tiers[t])}"></span>`).join('')
       : `<span class="si-seg" style="flex:1;background:${SESSION_KIND_COLOR.workflow}"></span>`;
-    return `<div class="agg-repo-row" title="${esc(r.repo)} · ${fmtUsd(r.costUsd)} · ${r.sessions} sessions${tierTxt ? ' — ' + tierTxt : ''}">`
+    return `<div class="agg-repo-row" data-tip="${esc(r.repo)} · ${fmtUsd(r.costUsd)} · ${r.sessions} sessions${tierTxt ? ' — ' + tierTxt : ''}">`
       + `<span class="agg-repo-name mono">${esc(truncTxt(r.repo, 26))}</span>`
       + `<span class="si-bar"><span class="si-bar-stack" style="width:${Math.max(2, Math.round((r.costUsd / repoMax) * 100))}%">${segs}</span></span>`
-      + `<span class="si-cost mono">${fmtUsdShort(r.costUsd)}</span><span class="si-share mono">${fmtN(r.sessions)}s</span></div>`;
+      + `<span class="si-cost mono">${fmtUsdShort(r.costUsd)}</span><span class="agg-repo-sess mono">${fmtN(r.sessions)} sess</span></div>`;
   }).join('');
   const tierTotal = a.byTier.reduce((x, y) => x + y.costUsd, 0) || 1;
   const tierSegs = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-seg" style="flex:${x.costUsd.toFixed(4)};background:${modelColor(x.tier)}" title="${x.tier} · ${fmtUsdShort(x.costUsd)} (${Math.round(x.costUsd / tierTotal * 100)}%)"></span>`).join('');

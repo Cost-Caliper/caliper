@@ -1640,3 +1640,15 @@ select.input {
 /* wf/sub badges are clickable jumps now */
 .sess-badge[data-open] { cursor: pointer; }
 .sess-badge[data-open]:hover { filter: brightness(1.35); }
+
+/* Cursor-following chart tooltip */
+.chart-tip {
+  position: fixed; z-index: 200; pointer-events: none;
+  background: var(--gray-100); color: var(--gray-1000);
+  border: 1px solid var(--border-hover); border-radius: 6px;
+  padding: 5px 9px; font-size: 11.5px; font-family: var(--font-mono);
+  box-shadow: var(--shadow-pop); max-width: 420px;
+}
+.chart-tip[hidden] { display: none; }
+.agg-repo-row { grid-template-columns: minmax(120px, 220px) 1fr 64px 70px; }
+.agg-repo-sess { font-size: 11px; color: var(--gray-700); text-align: right; white-space: nowrap; }
