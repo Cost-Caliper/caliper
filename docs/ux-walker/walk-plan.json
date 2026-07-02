@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-07-01T18:30:00Z",
+  "total_stories": 67,
+  "walking": 16,
+  "skipping": 51,
+  "re_verifying": 0,
+  "note": "First run — walking the [WALK] priority subset in 6 sequential batches (shared browser session ux-walker-8787). No GitHub issues per user request; findings fixed directly by the orchestrator.",
+  "batches": [
+    {"batch": "A", "stories": ["STORY-001", "STORY-002", "STORY-004", "STORY-010"], "theme": "Sessions home"},
+    {"batch": "B", "stories": ["STORY-011", "STORY-018"], "theme": "Zero-workflow session + main trace"},
+    {"batch": "C", "stories": ["STORY-015", "STORY-019"], "theme": "Nodes view + insight-bar jumps"},
+    {"batch": "D", "stories": ["STORY-025", "STORY-032", "STORY-035"], "theme": "Workflows trace + Subagents views + drill-in/back"},
+    {"batch": "E", "stories": ["STORY-046", "STORY-048", "STORY-049"], "theme": "Deep links, theme, empty states"},
+    {"batch": "F", "stories": ["STORY-060", "STORY-064"], "theme": "Cost journeys"}
+  ]
+}

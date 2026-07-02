@@ -1,0 +1,16 @@
+[
+  {
+    "id": "F-STORY-002-1",
+    "story_id": "STORY-002",
+    "severity": "suggestion",
+    "category": "happy-path",
+    "criterion": "Project picker scale — no search/filter for 200+ options",
+    "score": "warn",
+    "description": "With 203 folders known to Claude Code, the project picker is a single flat native <select> with well over 150 options, many with near-identical or generic path fragments (e.g. many '~/conductor/workspaces/agent-university/<city>' entries, and a long tail of 0-session hashed temp-dir names). Finding a specific folder among 200+ undifferentiated options is tedious.",
+    "expected": "Some grouping, recency ordering, or type-to-filter affordance for a picker with this many options (per the catalog's own noted gap in STORY-002/003).",
+    "actual": "Flat alphabetically-ish ordered list (actually appears to be by first-seen/registration order, not alphabetical or recency), no filter box, no favorites.",
+    "screenshot": "docs/ux-walker/stories/STORY-002/screenshots/step-1-switched-to-open-agents.png",
+    "suggested_fix": "Native <datalist>/combobox with type-ahead filtering, or group by recency vs. long-tail 0-session entries.",
+    "files_likely_involved": []
+  }
+]

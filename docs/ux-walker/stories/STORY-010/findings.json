@@ -1,0 +1,30 @@
+[
+  {
+    "id": "F-STORY-010-1",
+    "story_id": "STORY-010",
+    "severity": "medium",
+    "category": "a11y",
+    "criterion": "Tooltip explains the pill — 'active' pill has no title/tooltip at all",
+    "score": "fail",
+    "description": "The 'live' pill carries a rich explanatory title attribute per the source (\"Transcript updated in the last 2 minutes — this session appears to be running right now...\"), but the 'active' pill markup is bare: <span class=\"sess-active-pill\">active</span> with no title attribute whatsoever. A first-time user has no way to learn what 'active' means (i.e., 'this is the session currently shown in the drill-in tabs') without already knowing the app's mental model.",
+    "expected": "Per the task's own instruction to 'verify tooltips explain the pills' (plural), the active pill should carry an explanatory title, e.g. something like 'This is the session currently selected — Active Session, Workflows, and Subagents tabs show its data.'",
+    "actual": "hovering/inspecting the active pill returns an empty title (''); no tooltip appears on hover.",
+    "screenshot": "docs/ux-walker/stories/STORY-010/screenshots/step-2-no-active-pill-check.png",
+    "suggested_fix": "Add a title attribute to the sess-active-pill span mirroring the live pill's explanatory pattern.",
+    "files_likely_involved": []
+  },
+  {
+    "id": "F-STORY-010-2",
+    "story_id": "STORY-010",
+    "severity": "low",
+    "category": "error-handling",
+    "criterion": "Evidence gap — could not observe the 'live' pill actually rendering",
+    "score": "warn",
+    "description": "Attempted to observe the 'live' pill on the islamabad session (this very agent's own live conductor workspace, expected to be 'running right now' per the task brief). At the moment of testing, the session transcript's mtime was already 351-386s old (past the 120s live window), so the pill correctly did NOT render — consistent with the documented mtime rule, but it means the pill's actual rendered appearance/tooltip text could not be directly screenshotted in this walk. Clicking Refresh did not pick up a new mtime because this agent's own transcript only flushes at turn boundaries, which didn't land inside the walk's time window.",
+    "expected": "N/A — this is a testing-evidence limitation, not a confirmed product defect.",
+    "actual": "live pill absent both times checked (once before, once ~6 min after refresh); mtime stayed frozen at the same value across both checks, confirming no new transcript flush occurred in that window.",
+    "screenshot": "docs/ux-walker/stories/STORY-010/screenshots/step-3-islamabad-live-pill.png",
+    "suggested_fix": "Re-verify the live pill's rendering and tooltip copy in a follow-up walk timed right after a fresh agent turn writes to the transcript (mtime < 120s).",
+    "files_likely_involved": []
+  }
+]

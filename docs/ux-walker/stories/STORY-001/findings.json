@@ -1,0 +1,30 @@
+[
+  {
+    "id": "F-STORY-001-1",
+    "story_id": "STORY-001",
+    "severity": "low",
+    "category": "happy-path",
+    "criterion": "Labels/copy — pill casing",
+    "score": "warn",
+    "description": "The topic doc and rubric expect a lowercase 'active' pill label; the rendered pill text is uppercase 'ACTIVE' (via CSS text-transform, markup itself is lowercase 'active'). Not wrong, just a documentation/implementation casing mismatch worth reconciling.",
+    "expected": "Consistent casing between documented copy and rendered UI (either both lowercase or docs updated to reflect uppercase display).",
+    "actual": "Rendered pill displays 'ACTIVE' in all caps; underlying text node is 'active'.",
+    "screenshot": "docs/ux-walker/stories/STORY-001/screenshots/step-1.png",
+    "suggested_fix": "No code fix needed (cosmetic small-caps styling is fine) — just note it if docs are audited.",
+    "files_likely_involved": []
+  },
+  {
+    "id": "F-STORY-001-2",
+    "story_id": "STORY-001",
+    "severity": "low",
+    "category": "simplicity",
+    "criterion": "Information density on first click-through",
+    "score": "warn",
+    "description": "The only real session available to click for a first-load walk was a very data-rich session (15 workflows, 3 subagents, $253, spanning 28h) — this is a poor 'first timer' representative session (the John persona in the story expects plain conversations only). Not a bug, but the available seed data doesn't match the 'first load, no workflows' scenario the story describes, so full comprehension-as-a-newcomer could not be verified against a simple case.",
+    "expected": "A plain zero-workflow session available to fully exercise the John/first-timer path as documented.",
+    "actual": "All non-empty sessions in the active project have workflows/subagents attached; the Active Session view is dense (multiple stat cards, Pareto bars, savings panel) on first click for every available session.",
+    "screenshot": "docs/ux-walker/stories/STORY-001/screenshots/step-2.png",
+    "suggested_fix": "Not a product bug — future walker runs should pick a project/session with zero workflows to fully verify the 'plain session' first-load path.",
+    "files_likely_involved": []
+  }
+]

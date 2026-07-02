@@ -1,0 +1,16 @@
+[
+  {
+    "id": "F-STORY-004-1",
+    "story_id": "STORY-004",
+    "severity": "high",
+    "category": "happy-path",
+    "criterion": "Recovery / toggle state — 'Hide empty sessions' click has no effect",
+    "score": "fail",
+    "description": "Clicking 'Show N empty sessions' correctly reveals ghost rows and flips the button label to 'Hide empty sessions'. But clicking that same button again (to hide them) does nothing: the button label stays 'Hide empty sessions', the ghost rows remain visible, and this was reproduced 3 times in a row — via the accessibility-tree ref click, via a fresh DOM-selector click (#sess-empty-toggle), and via two consecutive native .click() calls through eval(). The toggle is a one-way door once flipped on; only a full page reload resets it back to the hidden-by-default state.",
+    "expected": "Clicking the toggle a second time flips showEmptySessions back to false, hides the ghost rows again, and reverts the label to 'Show N empty sessions', mirroring the first click exactly (as documented in sessions-home.md STORY-004 step 5).",
+    "actual": "Second click (and third, fourth attempts) is a no-op: ghost rows stay rendered, label stays 'Hide empty sessions', .sess-row-ghost count stays at 2.",
+    "screenshot": "docs/ux-walker/stories/STORY-004/screenshots/step-4-stuck-bug.png",
+    "suggested_fix": "The toggle's click handler likely only binds/executes the 'reveal' branch, or the re-render after the first click detaches/replaces the button without re-attaching a working 'hide' handler. Check whether renderSessionsList() re-creates #sess-empty-toggle on every call and whether the event listener is added once (delegated) vs. re-added per render (could also cause duplicate listeners racing, or zero listeners after a re-render swaps the node).",
+    "files_likely_involved": []
+  }
+]
