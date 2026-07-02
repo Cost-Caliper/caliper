@@ -112,6 +112,22 @@ export function summarizeSessionFile(projectDir, id) {
   return summary
 }
 
+// Every session on the machine, newest-first, with its folder attached. Cheap once
+// the aggregate scan has warmed the disk cache (summaries are mtime-cached).
+export function listAllSessions(projectsRoot, { limit = 2000 } = {}) {
+  const rows = []
+  for (const p of listProjects(projectsRoot)) {
+    let files = []
+    try { files = readdirSync(p.dir).filter((f) => SESSION_FILE_RE.test(f)) } catch { /* unreadable */ }
+    for (const f of files) {
+      const s = summarizeSessionFile(p.dir, f.replace(/\.jsonl$/, ''))
+      if (s) rows.push({ ...s, projectSlug: p.slug, projectCwd: p.cwd })
+    }
+  }
+  rows.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0))
+  return { total: rows.length, sessions: rows.slice(0, Math.max(1, limit)) }
+}
+
 // ── Machine-wide aggregation (incremental, disk-cached) ───────────────────────
 // Scans EVERY session in EVERY folder, but only up to `budgetMs` per call — callers
 // poll until `done`. Summaries are mtime-cached (memory + disk), so the first scan
@@ -150,16 +166,20 @@ export function aggregateMachine(projectsRoot, { budgetMs = 1500 } = {}) {
     s.totals.tokens.cacheRd += sum.tokens?.cacheRd || 0
     s.totals.tokens.cacheWr += sum.tokens?.cacheWr || 0
     s.totals.folders.add(item.dir)
+    const tier = sum.tier || 'other'
     const ms = sum.startedAt ? Date.parse(sum.startedAt) : sum.mtimeMs
     if (ms) {
       const d = new Date(ms); const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      const b = s.byDay.get(day) || { day, costUsd: 0, sessions: 0 }
-      b.costUsd += sum.costUsd || 0; b.sessions++; s.byDay.set(day, b)
+      const b = s.byDay.get(day) || { day, costUsd: 0, sessions: 0, tiers: {} }
+      b.costUsd += sum.costUsd || 0; b.sessions++
+      b.tiers[tier] = (b.tiers[tier] || 0) + (sum.costUsd || 0)
+      s.byDay.set(day, b)
     }
     const repo = repoOfCwd(sum.cwd || item.cwd)
-    const r = s.byRepo.get(repo) || { repo, costUsd: 0, sessions: 0 }
-    r.costUsd += sum.costUsd || 0; r.sessions++; s.byRepo.set(repo, r)
-    const tier = sum.tier || 'other'
+    const r = s.byRepo.get(repo) || { repo, costUsd: 0, sessions: 0, tiers: {} }
+    r.costUsd += sum.costUsd || 0; r.sessions++
+    r.tiers[tier] = (r.tiers[tier] || 0) + (sum.costUsd || 0)
+    s.byRepo.set(repo, r)
     s.byTier.set(tier, (s.byTier.get(tier) || 0) + (sum.costUsd || 0))
   }
   const done = s.idx >= s.queue.length

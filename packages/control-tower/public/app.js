@@ -3116,8 +3116,8 @@ function sessClock(ms) { return new Date(ms).toLocaleTimeString(undefined, { hou
 let sessionsSort = 'date'; // 'date' (day groups) | 'cost' (flat, most expensive first)
 function sessRowHtml(s, activeId, isEmpty) {
   const badges = [];
-  if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
-  if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  if (s.workflows) badges.push(`<span class="sess-badge" data-open="observe" title="Open this session's Workflows" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+  if (s.subagents) badges.push(`<span class="sess-badge" data-open="subagents" title="Open this session's Subagents" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
   const activePill = s.id === activeId ? '<span class="sess-active-pill" title="This is the session the Active Session / Workflows / Subagents tabs are currently showing">active</span>' : '';
   const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
   const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
@@ -3159,6 +3159,7 @@ function renderSessionsList() {
     + `<span class="seg-mini" style="margin-left:auto" role="group" aria-label="Sort sessions">`
     + ['date', 'cost'].map((k) => `<button class="seg-mini-btn${sessionsSort === k ? ' active' : ''}" type="button" data-sessions-sort="${k}">by ${k}</button>`).join('')
     + `</span></div>`;
+  html += sessHeadHtml('folder');
   if (sessionsSort === 'cost') {
     // Flat cost-ranked list (day grouping intentionally dropped in this mode).
     const ranked = [...shown].sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0));
@@ -3210,7 +3211,10 @@ document.getElementById('sessions-list')?.addEventListener('click', (e) => {
   const tgl = e.target.closest('#sess-empty-toggle');
   if (tgl) { showEmptySessions = !showEmptySessions; renderSessionsList(); return; }
   const row = e.target.closest('[data-session-id]');
-  if (row) selectSession(row.getAttribute('data-session-id'));
+  if (row) {
+    const openTab = e.target.closest('.sess-badge[data-open]')?.getAttribute('data-open') || null;
+    selectSession(row.getAttribute('data-session-id')).then(() => { if (openTab) setTab(openTab); }); // wf/sub badge → jump straight there
+  }
 });
 document.getElementById('sessions-refresh')?.addEventListener('click', async () => { projectsData = null; await loadSessionsBrowser(); });
 
@@ -3278,8 +3282,8 @@ async function refreshSessionStrip() {
   }
   const startMs = s.startedAt ? Date.parse(s.startedAt) : s.mtimeMs;
   const badges = []
-  if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
-  if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  if (s.workflows) badges.push(`<span class="sess-badge" data-open="observe" title="Open this session's Workflows" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+  if (s.subagents) badges.push(`<span class="sess-badge" data-open="subagents" title="Open this session's Subagents" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
   const liveNow = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now">live</span>' : '';
   strip.innerHTML = `<span class="sess-strip-label">Viewing session</span>`
     + `<span class="sess-strip-title" title="${esc(s.title || s.id)}">“${esc(truncTxt(s.title || '(no prompt captured)', 90))}”</span>${liveNow}`
@@ -3288,6 +3292,8 @@ async function refreshSessionStrip() {
     + `<button class="sess-strip-switch" type="button" data-goto-sessions title="Back to the session list">switch session ↗</button>`;
 }
 document.getElementById('active-session-strip')?.addEventListener('click', (e) => {
+  const open = e.target.closest('.sess-badge[data-open]');
+  if (open) { setTab(open.getAttribute('data-open')); return; }
   if (e.target.closest('[data-goto-sessions]')) setTab('sessions');
 });
 
@@ -3351,31 +3357,42 @@ document.getElementById('nav-crumbs')?.addEventListener('click', (e) => {
 });
 
 // ── Home dashboard: everything Claude Code has done on this machine ───────────
+function homeSessRowHtml(s) {
+  const badges = [];
+  if (s.workflows) badges.push(`<span class="sess-badge" data-open="observe" title="Open this session's Workflows" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+  if (s.subagents) badges.push(`<span class="sess-badge" data-open="subagents" title="Open this session's Subagents" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  const live = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — appears to be running now">live</span>' : '';
+  return `<button class="sess-row home-sess-row" type="button" data-home-session="${esc(s.id)}" data-home-project="${esc(s.projectSlug)}" title="${esc(s.projectCwd || s.projectSlug)}">`
+    + `<span class="sess-time mono">${s.mtimeMs ? sessDayLabel(s.mtimeMs) + ' ' + sessClock(s.mtimeMs) : '—'}</span>`
+    + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 80))}${live}</span>`
+    + `<span class="sess-badges">${badges.join('')}</span>`
+    + `<span class="home-folder mono muted">${esc(truncTxt(repoLabel(s.projectCwd || s.projectSlug).text, 30))}</span>`
+    + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — conversation cost (estimate)">${fmtUsdShort(s.costUsd)}</span>`
+    + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
+}
+// Column headers for the session lists ("what am I looking at" — user ask).
+function sessHeadHtml(kind) {
+  const model = '<span class="sess-head-model" title="Model tier (dot color)">model</span>';
+  if (kind === 'home') {
+    return `<div class="sess-head home-sess-row"><span>when</span><span>session — first prompt</span><span>runs</span><span style="text-align:right">folder</span><span style="text-align:right">cost</span>${model}</div>`;
+  }
+  return `<div class="sess-head sess-row-grid"><span>when</span><span>session — first prompt</span><span>runs</span><span style="text-align:right">length</span><span style="text-align:right">turns</span><span style="text-align:right">cost</span>${model}</div>`;
+}
 async function loadHome() {
   const body = document.getElementById('home-body'); if (!body) return;
   let home;
   try { home = await apiFetch('/v1/home'); } catch (err) { body.innerHTML = `<p class="muted" style="padding:12px">Could not load: ${esc(err.message)}</p>`; return; }
   if (!projectsData) projectsData = { projects: home.projects, activeProjectSlug: home.activeProjectSlug };
-  const row = (s) => {
-    const badges = [];
-    if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
-    if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
-    const live = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — appears to be running now">live</span>' : '';
-    return `<button class="sess-row home-sess-row" type="button" data-home-session="${esc(s.id)}" data-home-project="${esc(s.projectSlug)}" title="${esc(s.projectCwd || s.projectSlug)}">`
-      + `<span class="sess-time mono">${s.mtimeMs ? sessDayLabel(s.mtimeMs) + ' ' + sessClock(s.mtimeMs) : '—'}</span>`
-      + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 80))}${live}</span>`
-      + `<span class="sess-badges">${badges.join('')}</span>`
-      + `<span class="home-folder mono muted">${esc(truncTxt(repoLabel(s.projectCwd || s.projectSlug).text, 30))}</span>`
-      + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — conversation cost (estimate)">${fmtUsdShort(s.costUsd)}</span>`
-      + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
-  };
+  const row = homeSessRowHtml;
   lastHomeData = home;
   const moreFolders = home.projects.length - (home.folderTotals || []).length;
   const liveBlock = home.live && home.live.length
     ? `<div class="home-sect">Running now</div>${home.live.map(row).join('')}` : '';
   body.innerHTML = `<div id="home-agg"><p class="muted" style="padding:6px 4px;font-size:12px">Computing machine-wide totals…</p></div>`
     + liveBlock
-    + `<div class="home-sect">Recent sessions — all folders</div>${(home.recents || []).map(row).join('') || '<p class="muted" style="padding:8px;font-size:12px">Nothing yet.</p>'}`
+    + `<div class="home-sect">Recent sessions — all folders</div>`
+    + `<div id="home-recents">${sessHeadHtml('home')}${(home.recents || []).map(row).join('') || '<p class="muted" style="padding:8px;font-size:12px">Nothing yet.</p>'}`
+    + `<button class="sess-empty-toggle" type="button" data-home-allsessions>Show ALL sessions on this machine…</button></div>`
     + `<div class="home-sect">Most active folders`
     + `<span class="home-sort seg-mini" role="group" aria-label="Sort folders">`
     + ['recent', 'spend', 'sessions'].map((k) => `<button class="seg-mini-btn${homeFolderSort === k ? ' active' : ''}" type="button" data-folder-sort="${k}">${k}</button>`).join('')
@@ -3429,13 +3446,25 @@ function svgDailyChart(byDay) {
   const W = 920, H = 120, pad = 4, bw = Math.max(6, Math.floor((W - pad * 2) / days.length) - 3);
   const max = Math.max(...days.map((d) => d.costUsd), 0.01);
   const bars = days.map((d, i) => {
-    const h = Math.max(1, Math.round((d.costUsd / max) * (H - 26)));
     const x = pad + i * (bw + 3);
-    const lbl = d.day.slice(5); // MM-DD
-    return `<rect x="${x}" y="${H - 16 - h}" width="${bw}" height="${h}" rx="2" fill="var(--blue)" opacity="0.75"><title>${d.day} · ${fmtUsdShort(d.costUsd)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}</title></rect>`
-      + (i % 5 === 0 ? `<text x="${x}" y="${H - 4}" style="font-size:8.5px;fill:var(--gray-700)">${lbl}</text>` : '');
+    const totalH = Math.max(1, Math.round((d.costUsd / max) * (H - 26)));
+    const tierTxt = MODEL_ORDER.filter((t) => d.tiers && d.tiers[t]).map((t) => `${t} ${fmtUsdShort(d.tiers[t])}`).join(' · ');
+    const title = `<title>${d.day} · ${fmtUsdShort(d.costUsd)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}${tierTxt ? ' — ' + tierTxt : ''}</title>`;
+    // Stacked by model tier (bottom-up in MODEL_ORDER)
+    let segs = '', yCur = H - 16;
+    if (d.tiers && d.costUsd > 0) {
+      for (const t of [...MODEL_ORDER].reverse()) {
+        const c = d.tiers[t]; if (!c) continue;
+        const h = Math.max(1, Math.round((c / d.costUsd) * totalH));
+        yCur -= h;
+        segs += `<rect x="${x}" y="${yCur}" width="${bw}" height="${h}" fill="${modelColor(t)}" opacity="0.85">${title}</rect>`;
+      }
+    } else {
+      segs = `<rect x="${x}" y="${H - 16 - totalH}" width="${bw}" height="${totalH}" rx="2" fill="var(--blue)" opacity="0.75">${title}</rect>`;
+    }
+    return segs + (i % 5 === 0 ? `<text x="${x}" y="${H - 4}" style="font-size:8.5px;fill:var(--gray-700)">${d.day.slice(5)}</text>` : '');
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto" role="img" aria-label="Daily spend, last ${days.length} days">${bars}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto" role="img" aria-label="Daily spend by model, last ${days.length} days">${bars}</svg>`;
 }
 function renderAggregate(a) {
   const el = document.getElementById('home-agg'); if (!el) return;
@@ -3448,10 +3477,16 @@ function renderAggregate(a) {
     + `<div class="si-chip"><div class="si-chip-k">Cache reads</div><div class="si-chip-v">${fmtNshort(t.tokens.cacheRd)}</div><div class="si-chip-s">${fmtNshort(t.tokens.cacheWr)} written</div></div>`
     + `</div>`;
   const repoMax = a.byRepo.length ? a.byRepo[0].costUsd || 1 : 1;
-  const repoBars = a.byRepo.slice(0, 8).map((r) => `<div class="agg-repo-row" title="${esc(r.repo)} · ${fmtUsd(r.costUsd)} · ${r.sessions} sessions">`
-    + `<span class="agg-repo-name mono">${esc(truncTxt(r.repo, 26))}</span>`
-    + `<span class="si-bar"><span class="si-bar-stack" style="width:${Math.max(2, Math.round((r.costUsd / repoMax) * 100))}%"><span class="si-seg" style="flex:1;background:${SESSION_KIND_COLOR.workflow}"></span></span></span>`
-    + `<span class="si-cost mono">${fmtUsdShort(r.costUsd)}</span><span class="si-share mono">${fmtN(r.sessions)}s</span></div>`).join('');
+  const repoBars = a.byRepo.slice(0, 8).map((r) => {
+    const tierTxt = MODEL_ORDER.filter((t) => r.tiers && r.tiers[t]).map((t) => `${t} ${fmtUsdShort(r.tiers[t])}`).join(' · ');
+    const segs = (r.tiers && r.costUsd > 0)
+      ? MODEL_ORDER.filter((t) => r.tiers[t]).map((t) => `<span class="si-seg" style="flex:${r.tiers[t].toFixed(4)};background:${modelColor(t)}" title="${t} · ${fmtUsdShort(r.tiers[t])}"></span>`).join('')
+      : `<span class="si-seg" style="flex:1;background:${SESSION_KIND_COLOR.workflow}"></span>`;
+    return `<div class="agg-repo-row" title="${esc(r.repo)} · ${fmtUsd(r.costUsd)} · ${r.sessions} sessions${tierTxt ? ' — ' + tierTxt : ''}">`
+      + `<span class="agg-repo-name mono">${esc(truncTxt(r.repo, 26))}</span>`
+      + `<span class="si-bar"><span class="si-bar-stack" style="width:${Math.max(2, Math.round((r.costUsd / repoMax) * 100))}%">${segs}</span></span>`
+      + `<span class="si-cost mono">${fmtUsdShort(r.costUsd)}</span><span class="si-share mono">${fmtN(r.sessions)}s</span></div>`;
+  }).join('');
   const tierTotal = a.byTier.reduce((x, y) => x + y.costUsd, 0) || 1;
   const tierSegs = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-seg" style="flex:${x.costUsd.toFixed(4)};background:${modelColor(x.tier)}" title="${x.tier} · ${fmtUsdShort(x.costUsd)} (${Math.round(x.costUsd / tierTotal * 100)}%)"></span>`).join('');
   const tierLegend = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(x.tier)}"></span>${x.tier} ${fmtUsdShort(x.costUsd)}</span>`).join(' ');
@@ -3464,6 +3499,16 @@ function renderAggregate(a) {
     + `</div>`;
 }
 document.getElementById('home-body')?.addEventListener('click', async (e) => {
+  if (e.target.closest('[data-home-allsessions]')) {
+    const host = document.getElementById('home-recents'); if (!host) return;
+    host.innerHTML = '<p class="muted" style="padding:8px;font-size:12px">Loading every session…</p>';
+    let all;
+    try { all = await apiFetch('/v1/sessions/all'); }
+    catch (err) { host.innerHTML = `<p class="muted" style="padding:8px">Could not load: ${esc(err.message)}</p>`; return; }
+    host.innerHTML = `<div class="muted" style="font-size:11px;padding:4px 4px 6px">All ${fmtN(all.total)} sessions on this machine, newest first (conversation cost, est.)</div>`
+      + sessHeadHtml('home') + all.sessions.map(homeSessRowHtml).join('');
+    return;
+  }
   const sess = e.target.closest('[data-home-session]');
   if (sess) {
     const slug = sess.getAttribute('data-home-project');
@@ -3472,7 +3517,9 @@ document.getElementById('home-body')?.addEventListener('click', async (e) => {
       if (projectsData) projectsData.activeProjectSlug = slug;
       resetSessionCaches();
     }
-    selectSession(sess.getAttribute('data-home-session'));
+    const openTab = e.target.closest('.sess-badge[data-open]')?.getAttribute('data-open') || null;
+    await selectSession(sess.getAttribute('data-home-session'));
+    if (openTab) setTab(openTab); // wf/sub badge → jump straight to that view
     return;
   }
   const folder = e.target.closest('[data-home-folder]');

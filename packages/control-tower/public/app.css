@@ -1505,7 +1505,8 @@ select.input {
 .sess-active-pill {
   font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
   color: var(--blue); border: 1px solid color-mix(in srgb, var(--blue) 55%, transparent);
-  border-radius: 999px; padding: 1px 7px; margin-left: 8px; vertical-align: 1px;
+  border-radius: 999px; padding: 0 7px; margin-left: 8px; vertical-align: middle;
+  display: inline-block; line-height: 1.25;
 }
 .sess-row-ghost { opacity: .45; }
 .sess-empty-toggle {
@@ -1567,9 +1568,10 @@ select.input {
 
 /* "live" pill — session transcript updated in the last 2 minutes */
 .sess-live-pill {
+  display: inline-block; line-height: 1.25;
   font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
   color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 55%, transparent);
-  border-radius: 999px; padding: 1px 7px; margin-left: 8px; vertical-align: 1px;
+  border-radius: 999px; padding: 0 7px; margin-left: 8px; vertical-align: middle;
   animation: livepulse 2s ease-in-out infinite;
 }
 @keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
@@ -1591,10 +1593,10 @@ select.input {
 .crumb:hover { color: var(--gray-1000); }
 .crumb-here { color: var(--gray-1000); font-weight: 600; cursor: default; }
 .crumb-sep { color: var(--gray-500); font-size: 12px; }
-.session-subtabs { display: flex; gap: 2px; margin-left: auto; background: var(--gray-300); border-radius: 6px; padding: 2px; }
+.session-subtabs { display: flex; gap: 4px; margin-left: 18px; }
 .session-subtabs[hidden] { display: none; }
-.subtab-btn { height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--gray-900); border-radius: 4px; cursor: pointer; font-size: 12.5px; }
-.subtab-btn.active { background: var(--gray-1000); color: var(--bg-100); font-weight: 500; }
+.subtab-btn { height: 30px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--gray-900); cursor: pointer; font-size: 13px; }
+.subtab-btn.active { color: var(--gray-1000); border-bottom-color: var(--blue); font-weight: 500; }
 .subtab-btn:hover:not(.active) { color: var(--gray-1000); }
 
 /* ── Home dashboard ── */
@@ -1628,3 +1630,13 @@ select.input {
 .seg-mini-btn { border: 0; background: transparent; color: var(--gray-900); font-size: 10.5px; padding: 2px 8px; border-radius: 3px; cursor: pointer; text-transform: none; letter-spacing: 0; }
 .seg-mini-btn.active { background: var(--gray-1000); color: var(--bg-100); }
 .folder-rollup { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+
+
+/* Column headers for session lists */
+.sess-head { display: grid; gap: 10px; align-items: center; padding: 2px 4px 6px; font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--gray-700); border-bottom: 1px solid var(--border); }
+.sess-head.home-sess-row, .sess-head.sess-row-grid { background: none; border-radius: 0; cursor: default; }
+.sess-head.sess-row-grid { grid-template-columns: 44px minmax(200px, 1fr) auto 70px 52px 64px 14px; }
+.sess-head-model { text-align: right; }
+/* wf/sub badges are clickable jumps now */
+.sess-badge[data-open] { cursor: pointer; }
+.sess-badge[data-open]:hover { filter: brightness(1.35); }

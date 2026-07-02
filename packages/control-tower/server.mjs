@@ -31,7 +31,7 @@ import { deriveOptimizations } from './src/optimize.mjs'
 import { distillLearnings, groundingCheck } from '../workflow-lens/src/learnings.mjs'
 import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns, readRunScript } from './src/observer.mjs'
 import { scanSubagentTree, reconstructSubagent } from './src/subagents.mjs'
-import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData, aggregateMachine, resetAggregateScan } from './src/sessions.mjs'
+import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData, aggregateMachine, resetAggregateScan, listAllSessions } from './src/sessions.mjs'
 import { homedir } from 'node:os'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -201,6 +201,13 @@ async function handle(req, res) {
     const u = new URL(url, 'http://x')
     if (u.searchParams.get('restart') === '1') resetAggregateScan()
     jsonOk(res, aggregateMachine(PROJECTS_ROOT, { budgetMs: Math.min(4000, parseInt(u.searchParams.get('budgetMs') || '1500', 10) || 1500) }))
+    return
+  }
+
+  // ── GET /v1/sessions/all — every session on the machine (folder attached) ─────
+  if (method === 'GET' && urlPath === '/v1/sessions/all') {
+    const lim = Math.min(5000, Math.max(1, parseInt(new URL(url, 'http://x').searchParams.get('limit') || '2000', 10) || 2000))
+    jsonOk(res, listAllSessions(PROJECTS_ROOT, { limit: lim }))
     return
   }
 
