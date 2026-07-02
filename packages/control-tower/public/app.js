@@ -3113,6 +3113,23 @@ function sessDayLabel(ms) {
   return d.toLocaleDateString(undefined, opts);
 }
 function sessClock(ms) { return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }); }
+let sessionsSort = 'date'; // 'date' (day groups) | 'cost' (flat, most expensive first)
+function sessRowHtml(s, activeId, isEmpty) {
+  const badges = [];
+  if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
+  if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  const activePill = s.id === activeId ? '<span class="sess-active-pill" title="This is the session the Active Session / Workflows / Subagents tabs are currently showing">active</span>' : '';
+  const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
+  const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
+  return `<button class="sess-row${ghost}" type="button" data-session-id="${esc(s.id)}" title="${esc(s.id)}${s.cwd ? ' · ' + esc(s.cwd) : ''}">`
+    + `<span class="sess-time mono">${s._ms ? (sessionsSort === 'cost' ? sessDayLabel(s._ms) + ' ' : '') + sessClock(s._ms) : '—'}</span>`
+    + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 96))}${activePill}${livePill}</span>`
+    + `<span class="sess-badges">${badges.join('')}</span>`
+    + `<span class="sess-dur mono muted">${s.ms ? fmtMs(s.ms) : '—'}</span>`
+    + `<span class="sess-turns mono muted" title="assistant turns">${fmtN(s.turns)}t</span>`
+    + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — the conversation's own cost (workflow/subagent spend not included; open the session for the full total)">${fmtUsdShort(s.costUsd)}</span>`
+    + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
+}
 function renderSessionsList() {
   const list = document.getElementById('sessions-list'); if (!list) return;
   // Never silently no-op with a stale DOM: if the data was cleared (session switch,
@@ -3138,28 +3155,29 @@ function renderSessionsList() {
   const liveN = all.filter((s) => (Date.now() - (s.mtimeMs || 0)) < 120000).length;
   let html = `<div class="folder-rollup"><span class="folder-rollup-cost mono">${fmtUsdShort(totCost)}</span>`
     + `<span class="muted"> across ${all.length}${sessionsData.totalSessions > all.length ? ` of ${sessionsData.totalSessions}` : ''} session${all.length === 1 ? '' : 's'} (conversation cost, est.)</span>`
-    + (liveN ? `<span class="sess-live-pill" style="margin-left:10px">${liveN} live</span>` : '') + `</div>`;
+    + (liveN ? `<span class="sess-live-pill" style="margin-left:10px">${liveN} live</span>` : '')
+    + `<span class="seg-mini" style="margin-left:auto" role="group" aria-label="Sort sessions">`
+    + ['date', 'cost'].map((k) => `<button class="seg-mini-btn${sessionsSort === k ? ' active' : ''}" type="button" data-sessions-sort="${k}">by ${k}</button>`).join('')
+    + `</span></div>`;
+  if (sessionsSort === 'cost') {
+    // Flat cost-ranked list (day grouping intentionally dropped in this mode).
+    const ranked = [...shown].sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0));
+    html += `<div class="sess-group"><div class="sess-group-h"><span>Most expensive first</span><span class="sess-group-meta">${ranked.length} sessions</span></div>`;
+    for (const s of ranked) html += sessRowHtml({ ...s, _ms: (s.startedAt ? Date.parse(s.startedAt) : 0) || s.mtimeMs || 0 }, activeId, isEmpty);
+    html += '</div>';
+    if (hiddenCount > 0 || showEmptySessions) {
+      const shownEmpties = all.filter(isEmpty).length;
+      html += `<button class="sess-empty-toggle" type="button" id="sess-empty-toggle" aria-pressed="${showEmptySessions}">${showEmptySessions ? `Hide the ${shownEmpties} empty session${shownEmpties === 1 ? '' : 's'}` : `Show ${hiddenCount} empty session${hiddenCount === 1 ? '' : 's'} (no turns, no cost)`}</button>`;
+    }
+    list.innerHTML = html;
+    return;
+  }
   for (const [label, g] of ordered) {
     g.items.sort((a, b) => b._ms - a._ms);
     const dayCost = g.items.reduce((a, b) => a + (b.costUsd || 0), 0);
     html += `<div class="sess-group"><div class="sess-group-h"><span>${esc(label)}</span>`
       + `<span class="sess-group-meta">${g.items.length} session${g.items.length === 1 ? '' : 's'} · ${fmtUsdShort(dayCost)}</span></div>`;
-    for (const s of g.items) {
-      const badges = []
-      if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
-      if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
-      const activePill = s.id === activeId ? '<span class="sess-active-pill" title="This is the session the Active Session / Workflows / Subagents tabs are currently showing">active</span>' : '';
-      const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
-      const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
-      html += `<button class="sess-row${ghost}" type="button" data-session-id="${esc(s.id)}" title="${esc(s.id)}${s.cwd ? ' · ' + esc(s.cwd) : ''}">`
-        + `<span class="sess-time mono">${s._ms ? sessClock(s._ms) : '—'}</span>`
-        + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 96))}${activePill}${livePill}</span>`
-        + `<span class="sess-badges">${badges.join('')}</span>`
-        + `<span class="sess-dur mono muted">${s.ms ? fmtMs(s.ms) : '—'}</span>`
-        + `<span class="sess-turns mono muted" title="assistant turns">${fmtN(s.turns)}t</span>`
-        + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — the conversation's own cost (workflow/subagent spend not included; open the session for the full total)">${fmtUsdShort(s.costUsd)}</span>`
-        + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
-    }
+    for (const s of g.items) html += sessRowHtml(s, activeId, isEmpty);
     html += '</div>';
   }
   if (hiddenCount > 0 || showEmptySessions) {
@@ -3187,6 +3205,8 @@ async function selectSession(id) {
   setTab('session'); // Active Session tab reloads everything from the newly-selected session
 }
 document.getElementById('sessions-list')?.addEventListener('click', (e) => {
+  const srt = e.target.closest('[data-sessions-sort]');
+  if (srt) { sessionsSort = srt.getAttribute('data-sessions-sort'); renderSessionsList(); return; }
   const tgl = e.target.closest('#sess-empty-toggle');
   if (tgl) { showEmptySessions = !showEmptySessions; renderSessionsList(); return; }
   const row = e.target.closest('[data-session-id]');
@@ -3349,10 +3369,29 @@ async function loadHome() {
       + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — conversation cost (estimate)">${fmtUsdShort(s.costUsd)}</span>`
       + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
   };
-  // GIT-REPO grouping: conductor worktrees of the same repo merge into ONE card
-  // (a card per worktree made this view useless). Click → newest worktree's folder.
+  lastHomeData = home;
+  const moreFolders = home.projects.length - (home.folderTotals || []).length;
+  const liveBlock = home.live && home.live.length
+    ? `<div class="home-sect">Running now</div>${home.live.map(row).join('')}` : '';
+  body.innerHTML = `<div id="home-agg"><p class="muted" style="padding:6px 4px;font-size:12px">Computing machine-wide totals…</p></div>`
+    + liveBlock
+    + `<div class="home-sect">Recent sessions — all folders</div>${(home.recents || []).map(row).join('') || '<p class="muted" style="padding:8px;font-size:12px">Nothing yet.</p>'}`
+    + `<div class="home-sect">Most active folders`
+    + `<span class="home-sort seg-mini" role="group" aria-label="Sort folders">`
+    + ['recent', 'spend', 'sessions'].map((k) => `<button class="seg-mini-btn${homeFolderSort === k ? ' active' : ''}" type="button" data-folder-sort="${k}">${k}</button>`).join('')
+    + `</span></div><div class="home-folders" id="home-folders"></div>`
+    + (moreFolders > 0 ? `<button class="sess-empty-toggle" type="button" data-home-allfolders>Browse all ${home.projects.length} folders…</button>` : '');
+  renderHomeFolders();
+  pollAggregate();
+}
+// GIT-REPO grouping: conductor worktrees of the same repo merge into ONE card
+// (a card per worktree made this view useless). Click → newest worktree's folder.
+let lastHomeData = null;
+let homeFolderSort = 'recent';
+function renderHomeFolders() {
+  const host = document.getElementById('home-folders'); if (!host || !lastHomeData) return;
   const repoCards = new Map();
-  for (const f of (home.folderTotals || [])) {
+  for (const f of (lastHomeData.folderTotals || [])) {
     const r = repoLabel(f.cwd || f.slug);
     const key = r.wt ? `repo:${r.repo}` : `dir:${f.cwd || f.slug}`;
     if (!repoCards.has(key)) repoCards.set(key, { repo: r.repo, wts: 0, sessions: 0, costUsd: 0, coverage: 0, last: 0, slug: f.slug, cwds: [] });
@@ -3361,17 +3400,68 @@ async function loadHome() {
     c.cwds.push(f.cwd || f.slug);
     if ((f.lastActivityMs || 0) > c.last) { c.last = f.lastActivityMs || 0; c.slug = f.slug; }
   }
-  const folders = [...repoCards.values()].sort((a, b) => b.last - a.last).map((c) => `<button class="home-folder-card" type="button" data-home-folder="${esc(c.slug)}" data-home-repo="${esc(c.repo)}" title="${esc(c.cwds.join('\n'))}">`
+  const sorters = { recent: (a, b) => b.last - a.last, spend: (a, b) => b.costUsd - a.costUsd, sessions: (a, b) => b.sessions - a.sessions };
+  host.innerHTML = [...repoCards.values()].sort(sorters[homeFolderSort] || sorters.recent).map((c) => `<button class="home-folder-card" type="button" data-home-folder="${esc(c.slug)}" data-home-repo="${esc(c.repo)}" title="${esc(c.cwds.join('\n'))}">`
     + `<span class="hf-name">${esc(truncTxt(c.repo, 34))}</span>`
     + `<span class="hf-meta mono">${c.wts > 1 ? `${c.wts} worktrees · ` : ''}${c.sessions} session${c.sessions === 1 ? '' : 's'}</span>`
     + `<span class="hf-cost mono" title="Spend across the ${c.coverage} most recent session${c.coverage === 1 ? '' : 's'} of ${c.wts > 1 ? 'these worktrees' : 'this folder'} (estimate)">${fmtUsdShort(c.costUsd)}<span class="hf-cov">/${c.coverage} recent</span></span></button>`).join('');
-  const moreFolders = home.projects.length - (home.folderTotals || []).length;
-  const liveBlock = home.live && home.live.length
-    ? `<div class="home-sect">Running now</div>${home.live.map(row).join('')}` : '';
-  body.innerHTML = liveBlock
-    + `<div class="home-sect">Recent sessions — all folders</div>${(home.recents || []).map(row).join('') || '<p class="muted" style="padding:8px;font-size:12px">Nothing yet.</p>'}`
-    + `<div class="home-sect">Most active folders</div><div class="home-folders">${folders}</div>`
-    + (moreFolders > 0 ? `<button class="sess-empty-toggle" type="button" data-home-allfolders>Browse all ${home.projects.length} folders…</button>` : '');
+}
+
+// ── Machine-wide aggregate: totals + charts (incremental server scan, polled) ──
+let aggPolling = false;
+async function pollAggregate(restart = false) {
+  if (aggPolling) return;
+  aggPolling = true;
+  try {
+    for (let i = 0; i < 300; i++) {
+      let a;
+      try { a = await apiFetch(`/v1/aggregate${restart && i === 0 ? '?restart=1' : ''}`); }
+      catch (err) { const el = document.getElementById('home-agg'); if (el) el.innerHTML = `<p class="muted" style="font-size:12px">Totals unavailable: ${esc(err.message)}</p>`; return; }
+      renderAggregate(a);
+      if (a.done) return;
+      if (!document.getElementById('home-agg')) return; // navigated away
+    }
+  } finally { aggPolling = false; }
+}
+function svgDailyChart(byDay) {
+  const days = byDay.slice(-30);
+  if (!days.length) return '';
+  const W = 920, H = 120, pad = 4, bw = Math.max(6, Math.floor((W - pad * 2) / days.length) - 3);
+  const max = Math.max(...days.map((d) => d.costUsd), 0.01);
+  const bars = days.map((d, i) => {
+    const h = Math.max(1, Math.round((d.costUsd / max) * (H - 26)));
+    const x = pad + i * (bw + 3);
+    const lbl = d.day.slice(5); // MM-DD
+    return `<rect x="${x}" y="${H - 16 - h}" width="${bw}" height="${h}" rx="2" fill="var(--blue)" opacity="0.75"><title>${d.day} · ${fmtUsdShort(d.costUsd)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}</title></rect>`
+      + (i % 5 === 0 ? `<text x="${x}" y="${H - 4}" style="font-size:8.5px;fill:var(--gray-700)">${lbl}</text>` : '');
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto" role="img" aria-label="Daily spend, last ${days.length} days">${bars}</svg>`;
+}
+function renderAggregate(a) {
+  const el = document.getElementById('home-agg'); if (!el) return;
+  const t = a.totals;
+  const prog = a.done ? '' : `<span class="muted" style="font-size:11px;margin-left:10px">scanning… ${fmtN(a.progress.scannedSessions)}/${fmtN(a.progress.totalSessions)} sessions</span>`;
+  const chips = `<div class="agg-chips">`
+    + `<div class="si-chip"><div class="si-chip-k">All-time spend${a.done ? '' : ' (so far)'}</div><div class="si-chip-v">${fmtUsdShort(t.costUsd)}</div><div class="si-chip-s">cache-aware estimate</div></div>`
+    + `<div class="si-chip"><div class="si-chip-k">Sessions</div><div class="si-chip-v">${fmtN(t.sessions)}</div><div class="si-chip-s">${fmtN(t.folders)} folders</div></div>`
+    + `<div class="si-chip"><div class="si-chip-k">Output tokens</div><div class="si-chip-v">${fmtNshort(t.tokens.out)}</div><div class="si-chip-s">${fmtNshort(t.tokens.in)} fresh in</div></div>`
+    + `<div class="si-chip"><div class="si-chip-k">Cache reads</div><div class="si-chip-v">${fmtNshort(t.tokens.cacheRd)}</div><div class="si-chip-s">${fmtNshort(t.tokens.cacheWr)} written</div></div>`
+    + `</div>`;
+  const repoMax = a.byRepo.length ? a.byRepo[0].costUsd || 1 : 1;
+  const repoBars = a.byRepo.slice(0, 8).map((r) => `<div class="agg-repo-row" title="${esc(r.repo)} · ${fmtUsd(r.costUsd)} · ${r.sessions} sessions">`
+    + `<span class="agg-repo-name mono">${esc(truncTxt(r.repo, 26))}</span>`
+    + `<span class="si-bar"><span class="si-bar-stack" style="width:${Math.max(2, Math.round((r.costUsd / repoMax) * 100))}%"><span class="si-seg" style="flex:1;background:${SESSION_KIND_COLOR.workflow}"></span></span></span>`
+    + `<span class="si-cost mono">${fmtUsdShort(r.costUsd)}</span><span class="si-share mono">${fmtN(r.sessions)}s</span></div>`).join('');
+  const tierTotal = a.byTier.reduce((x, y) => x + y.costUsd, 0) || 1;
+  const tierSegs = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-seg" style="flex:${x.costUsd.toFixed(4)};background:${modelColor(x.tier)}" title="${x.tier} · ${fmtUsdShort(x.costUsd)} (${Math.round(x.costUsd / tierTotal * 100)}%)"></span>`).join('');
+  const tierLegend = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(x.tier)}"></span>${x.tier} ${fmtUsdShort(x.costUsd)}</span>`).join(' ');
+  el.innerHTML = `<div class="home-sect">This machine — all folders, all time${prog}</div>`
+    + chips
+    + `<div class="agg-charts">`
+    + `<div class="agg-chart"><div class="agg-chart-title">Daily spend — last 30 active days</div>${svgDailyChart(a.byDay)}</div>`
+    + `<div class="agg-chart"><div class="agg-chart-title">Spend by repo (top 8)</div>${repoBars || '<p class="muted" style="font-size:11px">—</p>'}</div>`
+    + `<div class="agg-chart"><div class="agg-chart-title">Spend by model tier</div><span class="si-bar agg-tier-bar"><span class="si-bar-stack" style="width:100%">${tierSegs}</span></span><div style="margin-top:4px">${tierLegend}</div></div>`
+    + `</div>`;
 }
 document.getElementById('home-body')?.addEventListener('click', async (e) => {
   const sess = e.target.closest('[data-home-session]');
@@ -3395,6 +3485,13 @@ document.getElementById('home-body')?.addEventListener('click', async (e) => {
     setTab('sessions');
     // Pre-filter the folder picker to this repo so its worktrees are one scan away.
     if (repo) setTimeout(() => { const f = document.getElementById('project-filter'); if (f) { f.value = repo; f.dispatchEvent(new Event('input', { bubbles: true })); } }, 700);
+    return;
+  }
+  const sort = e.target.closest('[data-folder-sort]');
+  if (sort) {
+    homeFolderSort = sort.getAttribute('data-folder-sort');
+    document.querySelectorAll('[data-folder-sort]').forEach((b) => b.classList.toggle('active', b === sort));
+    renderHomeFolders();
     return;
   }
   if (e.target.closest('[data-home-allfolders]')) setTab('sessions');

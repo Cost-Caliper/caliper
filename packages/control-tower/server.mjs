@@ -31,7 +31,7 @@ import { deriveOptimizations } from './src/optimize.mjs'
 import { distillLearnings, groundingCheck } from '../workflow-lens/src/learnings.mjs'
 import { resolveSessionDir, reconstructRun, summaryFromRun, scanCompletedRuns, watchRuns, readRunScript } from './src/observer.mjs'
 import { scanSubagentTree, reconstructSubagent } from './src/subagents.mjs'
-import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData } from './src/sessions.mjs'
+import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData, aggregateMachine, resetAggregateScan } from './src/sessions.mjs'
 import { homedir } from 'node:os'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -193,6 +193,14 @@ async function handle(req, res) {
     home.activeProjectSlug = PROJECT_DIR ? basename(PROJECT_DIR) : null
     home.activeSessionId = SESS ? basename(String(SESS).replace(/[/\\]+$/, '')) : null
     jsonOk(res, home)
+    return
+  }
+
+  // ── GET /v1/aggregate — MACHINE-WIDE totals/charts (incremental; poll until done) ──
+  if (method === 'GET' && urlPath === '/v1/aggregate') {
+    const u = new URL(url, 'http://x')
+    if (u.searchParams.get('restart') === '1') resetAggregateScan()
+    jsonOk(res, aggregateMachine(PROJECTS_ROOT, { budgetMs: Math.min(4000, parseInt(u.searchParams.get('budgetMs') || '1500', 10) || 1500) }))
     return
   }
 

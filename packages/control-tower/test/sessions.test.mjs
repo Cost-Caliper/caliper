@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData } from '../src/sessions.mjs'
+import { scanProjectSessions, summarizeSessionFile, listProjects, buildHomeData, aggregateMachine, resetAggregateScan } from '../src/sessions.mjs'
 import { scanSubagentTree, MAIN_SESSION } from '../src/subagents.mjs'
 
 const aLine = (ts, model = 'claude-opus-4-8', text = 'ok') =>
@@ -151,6 +151,36 @@ test('buildHomeData: cross-folder recents + bounded folder spend rollups', () =>
     assert.ok(ft && ft.costUsd > 0 && ft.sessions === 1)
     assert.equal(typeof ft.coverage, 'number')                  // honest "N most recent" bound
   } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('aggregateMachine: machine-wide totals, by-day/by-repo/by-tier, incremental progress', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ct-agg-'))
+  try {
+    const projA = join(root, '-Users-x-develop-alpha')
+    mkdirSync(projA, { recursive: true })
+    writeFileSync(join(projA, `${RICH_ID}.jsonl`), [uLine('2026-06-01T00:00:00.000Z', 'alpha'), aLine('2026-06-01T00:00:05.000Z')].join('\n'))
+    const projB = join(root, '-Users-x-conductor-workspaces-beta-wt1')
+    mkdirSync(projB, { recursive: true })
+    writeFileSync(join(projB, `${PLAIN_ID}.jsonl`), [uLine('2026-06-02T00:00:00.000Z', 'beta'), aLine('2026-06-02T00:00:03.000Z', 'claude-haiku-4-5')].join('\n'))
+
+    resetAggregateScan()
+    const a = aggregateMachine(root, { budgetMs: 5000 })
+    assert.equal(a.done, true)
+    assert.equal(a.progress.scannedSessions, 2)
+    assert.equal(a.totals.sessions, 2)
+    assert.ok(a.totals.costUsd > 0)
+    assert.ok(a.totals.tokens.out > 0)
+    assert.equal(a.byDay.length >= 2, true)                       // one bucket per active day
+    assert.ok(a.byDay.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.day)))
+    // both fixture transcripts carry cwd:'/repo' → grouped under one repo with 2 sessions
+    assert.ok(a.byRepo.length >= 1)
+    assert.equal(a.byRepo[0].sessions, 2)
+    assert.ok(a.byTier.some((t) => t.tier === 'haiku' && t.costUsd > 0))
+    // Second call is served from the completed scan (no rescan needed)
+    const b = aggregateMachine(root, { budgetMs: 1 })
+    assert.equal(b.done, true)
+    assert.equal(b.totals.sessions, 2)
+  } finally { rmSync(root, { recursive: true, force: true }); resetAggregateScan() }
 })
 
 test('scanSubagentTree: a REGULAR session (no subagents dir) still yields a MAIN root with stats', () => {
