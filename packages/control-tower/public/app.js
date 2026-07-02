@@ -3041,6 +3041,15 @@ function projectGroupKey(p) {
   const parent = String(cwd).replace(/\/[^/]+\/?$/, '') || cwd;
   return { key: parent, label: homeAbbrev(parent) + '/' };
 }
+// Human label for a folder: conductor worktrees read as "repo · worktree" (the full
+// path is useless noise); everything else reads as its directory name.
+function repoLabel(cwd) {
+  const s = String(cwd || '');
+  const m = s.match(/\/conductor\/workspaces\/([^/]+)\/([^/]+)\/?$/);
+  if (m) return { repo: m[1], wt: m[2], text: `${m[1]} · ${m[2]}` };
+  const name = s.split('/').filter(Boolean).pop() || s;
+  return { repo: name, wt: null, text: name };
+}
 function renderProjectPickerOptions(filter = '') {
   const sel = document.getElementById('project-picker'); if (!sel || !projectsData) return;
   const active = projectsData.activeProjectSlug;
@@ -3336,14 +3345,26 @@ async function loadHome() {
       + `<span class="sess-time mono">${s.mtimeMs ? sessDayLabel(s.mtimeMs) + ' ' + sessClock(s.mtimeMs) : '—'}</span>`
       + `<span class="sess-title">${esc(truncTxt(s.title || '(no prompt captured)', 80))}${live}</span>`
       + `<span class="sess-badges">${badges.join('')}</span>`
-      + `<span class="home-folder mono muted">${esc(truncTxt(homeAbbrev(s.projectCwd || s.projectSlug), 28))}</span>`
+      + `<span class="home-folder mono muted">${esc(truncTxt(repoLabel(s.projectCwd || s.projectSlug).text, 30))}</span>`
       + `<span class="sess-cost mono" title="${fmtUsd(s.costUsd)} — conversation cost (estimate)">${fmtUsdShort(s.costUsd)}</span>`
       + `<span class="tier-dot" title="${esc(s.model || '')}" style="background:${tierColor(s.tier)}"></span></button>`;
   };
-  const folders = (home.folderTotals || []).map((f) => `<button class="home-folder-card" type="button" data-home-folder="${esc(f.slug)}" title="${esc(f.cwd || f.slug)}">`
-    + `<span class="hf-name">${esc(truncTxt(homeAbbrev(f.cwd || f.slug), 34))}</span>`
-    + `<span class="hf-meta mono">${f.sessions} session${f.sessions === 1 ? '' : 's'}</span>`
-    + `<span class="hf-cost mono" title="Spend across this folder's ${f.coverage} most recent session${f.coverage === 1 ? '' : 's'} (estimate)">${fmtUsdShort(f.costUsd)}<span class="hf-cov">/${f.coverage} recent</span></span></button>`).join('');
+  // GIT-REPO grouping: conductor worktrees of the same repo merge into ONE card
+  // (a card per worktree made this view useless). Click → newest worktree's folder.
+  const repoCards = new Map();
+  for (const f of (home.folderTotals || [])) {
+    const r = repoLabel(f.cwd || f.slug);
+    const key = r.wt ? `repo:${r.repo}` : `dir:${f.cwd || f.slug}`;
+    if (!repoCards.has(key)) repoCards.set(key, { repo: r.repo, wts: 0, sessions: 0, costUsd: 0, coverage: 0, last: 0, slug: f.slug, cwds: [] });
+    const c = repoCards.get(key);
+    c.wts += r.wt ? 1 : 0; c.sessions += f.sessions; c.costUsd += f.costUsd; c.coverage += f.coverage;
+    c.cwds.push(f.cwd || f.slug);
+    if ((f.lastActivityMs || 0) > c.last) { c.last = f.lastActivityMs || 0; c.slug = f.slug; }
+  }
+  const folders = [...repoCards.values()].sort((a, b) => b.last - a.last).map((c) => `<button class="home-folder-card" type="button" data-home-folder="${esc(c.slug)}" data-home-repo="${esc(c.repo)}" title="${esc(c.cwds.join('\n'))}">`
+    + `<span class="hf-name">${esc(truncTxt(c.repo, 34))}</span>`
+    + `<span class="hf-meta mono">${c.wts > 1 ? `${c.wts} worktrees · ` : ''}${c.sessions} session${c.sessions === 1 ? '' : 's'}</span>`
+    + `<span class="hf-cost mono" title="Spend across the ${c.coverage} most recent session${c.coverage === 1 ? '' : 's'} of ${c.wts > 1 ? 'these worktrees' : 'this folder'} (estimate)">${fmtUsdShort(c.costUsd)}<span class="hf-cov">/${c.coverage} recent</span></span></button>`).join('');
   const moreFolders = home.projects.length - (home.folderTotals || []).length;
   const liveBlock = home.live && home.live.length
     ? `<div class="home-sect">Running now</div>${home.live.map(row).join('')}` : '';
@@ -3367,10 +3388,13 @@ document.getElementById('home-body')?.addEventListener('click', async (e) => {
   const folder = e.target.closest('[data-home-folder]');
   if (folder) {
     const slug = folder.getAttribute('data-home-folder');
+    const repo = folder.getAttribute('data-home-repo');
     try { await apiFetch('/v1/project/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) }); } catch (err) { alert('Could not switch folder: ' + err.message); return; }
     resetSessionCaches();
     if (projectsData) projectsData.activeProjectSlug = slug;
     setTab('sessions');
+    // Pre-filter the folder picker to this repo so its worktrees are one scan away.
+    if (repo) setTimeout(() => { const f = document.getElementById('project-filter'); if (f) { f.value = repo; f.dispatchEvent(new Event('input', { bubbles: true })); } }, 700);
     return;
   }
   if (e.target.closest('[data-home-allfolders]')) setTab('sessions');
