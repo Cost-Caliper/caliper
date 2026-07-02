@@ -1,0 +1,16 @@
+[
+  {
+    "id": "F-018-1",
+    "story_id": "STORY-018",
+    "severity": "low",
+    "category": "a11y",
+    "criterion": "Alt text / accessible naming: informative interactive elements have meaningful names",
+    "score": "warn",
+    "description": "In the main-conversation-trace Timeline SVG, the individual inference/tool segments (elements with `data-seg-idx`) have no accessible name (no aria-label/title exposed to the accessibility tree) even though they are clickable and open a detail drawer. By contrast, the outer waterfall bar and the whole-session graphics-symbol elsewhere in the app DO carry full descriptive labels (e.g. 'main conversation — the chat itself (7.0 s · $0.808). Click to inspect its timeline.'). A keyboard/screen-reader user has no way to discover or distinguish the per-segment click targets inside the timeline.",
+    "expected": "Each timeline segment should expose an accessible name/label similar to the pattern already used on the waterfall bar and node graphics-symbols, e.g. 'Inference step 1 · 5.9s · click for details' or 'Tool call: Read · 94ms · click for details'.",
+    "actual": "Segments are plain generic SVG rects with only a `data-seg-idx` data attribute and a `title`-only hover tooltip (per the existing documented gap for cost tooltips in STORY docs) — nothing in the accessibility tree names them individually.",
+    "screenshot": "docs/ux-walker/stories/STORY-018/screenshots/03-timeline-segment-click-drawer.png",
+    "suggested_fix": "Add an aria-label (or a <title> child element within the SVG rect, which most screen readers will pick up) to each segment mirroring the hover-tooltip text already computed for mouseover, so the same string serves both sighted-hover and accessibility-tree consumers.",
+    "files_likely_involved": ["packages/control-tower/public/app.js"]
+  }
+]

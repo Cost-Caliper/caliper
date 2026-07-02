@@ -1,0 +1,16 @@
+[
+  {
+    "id": "F-011-1",
+    "story_id": "STORY-011",
+    "severity": "medium",
+    "category": "error-handling",
+    "criterion": "Error messages: Specific, actionable, non-technical",
+    "score": "fail",
+    "description": "The Sessions tab's default project folder (~/conductor/workspaces/open-agents/provo, freshly selected on first load) fails to load its session list and surfaces the raw string 'Could not load sessions: [object Object]' instead of a real error message. No console error was emitted alongside it (checked via `agent-browser errors`), so there is no secondary signal for a developer either.",
+    "expected": "A specific, non-technical error message (matching the app's own pattern elsewhere, e.g. the 503 NOT_CONFIGURED copy documented in STORY-050/031: 'Not watching a session — set WFLENS_SESSION_DIR.'), or at minimum the underlying error's .message stringified instead of the object itself.",
+    "actual": "Literal text 'Could not load sessions: [object Object]' rendered inline where the session list should be; no console error to cross-check.",
+    "screenshot": "docs/ux-walker/stories/STORY-011/screenshots/01-sessions-tab-initial.png",
+    "suggested_fix": "Wherever this catch block builds the error text (likely `Could not load sessions: ${err}` or similar string-concat of a thrown non-Error object), use `err?.message ?? String(err)` or JSON.stringify the error payload so the real cause surfaces instead of the default Object.prototype.toString() output.",
+    "files_likely_involved": ["packages/control-tower/public/app.js"]
+  }
+]

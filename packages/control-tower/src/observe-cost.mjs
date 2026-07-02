@@ -15,11 +15,14 @@ import { PRICE } from '../../workflow-lens/src/shim.mjs'
 
 // Resolve the tier from a full model ID like 'claude-haiku-4-5-20251001'
 // Falls back to 'sonnet' if unrecognized.
+// fable-5 is its OWN tier: $10/$50 per Mtok (2× opus) — verified against the
+// LiteLLM price DB and ccusage 2026-07-01; bucketing it as opus halved its cost.
 export function tierFromModel(model) {
   if (!model) return 'sonnet'
   const m = String(model).toLowerCase()
   if (m.includes('haiku')) return 'haiku'
-  if (m.includes('opus') || m.includes('fable')) return 'opus'
+  if (m.includes('fable')) return 'fable'
+  if (m.includes('opus')) return 'opus'
   if (m.includes('sonnet')) return 'sonnet'
   return 'sonnet'
 }
@@ -40,8 +43,20 @@ export function costOfUsage(usage, model, price = PRICE) {
 
   // plain input (non-cache) cost
   const inputCost  = inputTok  * inRate
-  // cache_creation: 1.25× write premium
-  const createCost = cacheCreate * inRate * 1.25
+  // cache_creation is priced by TTL bucket (Anthropic): 5-minute writes ×1.25,
+  // 1-HOUR writes ×2.0. Buckets come either pre-accumulated (cache_5m/_1h from
+  // parseAgentTranscript totals) or raw (usage.cache_creation.ephemeral_*). Any
+  // unbucketed remainder falls back to the legacy ×1.25. Verified vs ccusage.
+  const cc = usage.cache_creation || null
+  const b5 = usage.cache_5m_input_tokens != null ? usage.cache_5m_input_tokens : (cc ? cc.ephemeral_5m_input_tokens || 0 : null)
+  const b1h = usage.cache_1h_input_tokens != null ? usage.cache_1h_input_tokens : (cc ? cc.ephemeral_1h_input_tokens || 0 : null)
+  let createCost
+  if (b5 != null || b1h != null) {
+    const rest = Math.max(0, cacheCreate - (b5 || 0) - (b1h || 0))
+    createCost = ((b5 || 0) * 1.25 + (b1h || 0) * 2.0 + rest * 1.25) * inRate
+  } else {
+    createCost = cacheCreate * inRate * 1.25
+  }
   // cache_read: 0.10× read discount
   const readCost   = cacheRead   * inRate * 0.10
   // output

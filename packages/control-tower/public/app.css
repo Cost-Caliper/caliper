@@ -1575,3 +1575,11 @@ select.input {
 @keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
 /* Disabled fold buttons explain themselves via title; dim them clearly */
 #sub-expand-all:disabled, #sub-collapse-all:disabled { opacity: .35; cursor: help; }
+
+/* Trace chaining: a tool row is the output of the inference above it */
+.trace-row-tool { padding-left: 14px; }
+.trace-connector { color: var(--gray-500); font-size: 11px; margin-right: -2px; }
+.trace-decided { color: var(--gray-700); font-size: 11px; margin-left: 8px; font-family: var(--font-mono); }
+/* Flash the run row navigateToRun lands on (several runs share a name) */
+.obs-row-flash { animation: rowflash 2.4s ease-out; }
+@keyframes rowflash { 0% { background: color-mix(in srgb, var(--blue) 28%, transparent); } 100% { background: transparent; } }

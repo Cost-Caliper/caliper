@@ -1,0 +1,30 @@
+[
+  {
+    "id": "F-019-1",
+    "story_id": "STORY-019",
+    "severity": "high",
+    "category": "functional-bug",
+    "criterion": "Clicking a workflow bar in the insight-card leaderboard jumps to the Workflows tab AND auto-expands/scrolls to that exact run, so the user can tell which run they landed on",
+    "score": 1,
+    "description": "Clicking any 'wf'-kind bar in the Active Session insight card (e.g. 'degree-build $83.26 · 13%', run id a89488c9-6e5) correctly switches to the Workflows tab, but the target run's accordion row never expands (aria-expanded stayed 'false' on all 15 rows, verified via DOM and accessibility snapshot both immediately and after an extra 2s wait) and the list never scrolls to center it. Reproduced twice, including from a hard page reload, so this is not a one-off race. No console errors or network failures were observed (agent-browser errors/console both empty) -- this is a silent no-op, consistent with the documented 'poll loop times out; user sees nothing' degradation path, except it happens on the very first attempt with the target row already present in the DOM (no fetch/wait should have been needed). Manually clicking the same row's <tr role=button> DOES flip aria-expanded to true and renders full detail, proving the accordion toggle itself works -- the defect is isolated to the navigateToRun (or equivalent) auto-expand call from the insight-card click handler.",
+    "expected": "Per STORY-019/discovery: click a top-5 'wf' bar -> Workflows tab activates -> poll (up to ~2s) for the obs-run-item[data-run-id] row -> if collapsed, toggle it open -> scrollIntoView({behavior:'smooth', block:'center'}).",
+    "actual": "Tab switches; the correct row is present in the list (data-run-id matches, e.g. a89488c9-6e5 with $83.26/24 agents/16m 0s) but aria-expanded stays false and no scroll/centering occurs. A visually similar (but unrelated) row appeared with a darker background, which is leftover :hover styling from cursor position, not a real selection/target indicator -- this is actively misleading since it looks like a highlight.",
+    "screenshot": "docs/ux-walker/stories/STORY-019/screenshots/02-workflows-no-autoexpand-bug.png",
+    "suggested_fix": "Debug the click handler wired to the insight-card 'wf' bars (data-nav-kind=wf, data-nav-id=<runId>) on the Active Session view -- confirm it actually calls the Workflows-tab toggle/expand function with the right id after the tab switch and DOM settle, and add a fallback visible highlight/scroll even if the poll times out, rather than a silent no-op. Compare against the working 'sub' and 'main' code paths (both confirmed working in this same session) to find the divergence.",
+    "files_likely_involved": []
+  },
+  {
+    "id": "F-019-2",
+    "story_id": "STORY-019",
+    "severity": "low",
+    "category": "positive-confirmation",
+    "criterion": "Subagent and main-conversation insight-bar jumps are clear and non-disorienting",
+    "score": 5,
+    "description": "For contrast with F-019-1: clicking a subagent bar (data-nav-kind=sub) and the 'main conversation (this chat)' row both worked exactly as specced -- tab switched to Subagents, the correct node's full detail auto-opened (own task text, own trace, own cost), and the node was highlighted green in the parent-child tree. Identity strip stayed correct and visible throughout both jumps.",
+    "expected": "Cross-tab jump lands the user unambiguously on the clicked item's detail.",
+    "actual": "Matches expected for both 'sub' and 'main' kinds.",
+    "screenshot": "docs/ux-walker/stories/STORY-019/screenshots/05-subagent-tab-jump.png",
+    "suggested_fix": "None needed -- included as a working-path reference for triaging F-019-1.",
+    "files_likely_involved": []
+  }
+]

@@ -147,12 +147,17 @@ function applyTheme(theme) {
 }
 
 els.btnTheme.addEventListener('click', () => {
-  applyTheme(state.theme === 'dark' ? 'light' : 'dark');
+  const next = state.theme === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  try { localStorage.setItem('ct-theme', next); } catch { /* private mode */ }
 });
 
-// Respect OS preference on first load
-if (window.matchMedia('(prefers-color-scheme: light)').matches) {
-  applyTheme('light');
+// First load: explicit user choice (persisted) wins; else respect OS preference.
+{
+  let saved = null;
+  try { saved = localStorage.getItem('ct-theme'); } catch { /* private mode */ }
+  if (saved === 'light' || saved === 'dark') applyTheme(saved);
+  else if (window.matchMedia('(prefers-color-scheme: light)').matches) applyTheme('light');
 }
 
 // ── Mode toggle ───────────────────────────────────────────────────────────────
@@ -211,8 +216,14 @@ async function apiFetch(path, opts = {}) {
   });
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
-    try { const j = await res.json(); detail = j.message || j.error || detail; } catch {}
-    throw new Error(detail);
+    // Server errors are shaped {error:{code,message}} — never let an object reach
+    // Error() or the UI prints "[object Object]" (walker finding F-011-1).
+    try {
+      const j = await res.json();
+      const e = j.error;
+      detail = j.message || (e && typeof e === 'object' ? (e.message || e.code) : e) || detail;
+    } catch { /* non-JSON body */ }
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
   }
   return res.json();
 }
@@ -1446,7 +1457,7 @@ function applyObservedFilters() {
 obsFilterEls.branch?.addEventListener('change', applyObservedFilters);
 obsFilterEls.dir?.addEventListener('change', applyObservedFilters);
 
-const TIER_COLORS = { haiku: '#3b8e6e', sonnet: '#9c6b2e', opus: '#a33' };
+const TIER_COLORS = { haiku: '#3b8e6e', sonnet: '#9c6b2e', opus: '#a33', fable: '#8b5cf6' };
 function tierColor(tier) { return TIER_COLORS[tier] || '#666'; }
 
 function statusClass(status) {
@@ -1661,7 +1672,7 @@ function buildTimelineSvg(calls) {
         const sw = Math.max(1, (f1 - f0) * bw);
         const segTools = esc((s.tools || []).join(', '));
         // data-seg-* feed the hover tooltip; data-seg-idx opens THAT step's detail.
-        return `<rect data-call-idx="${i}" data-seg-idx="${si}" data-seg-kind="${s.kind}" data-seg-dur="${(s.endMs - s.startMs).toFixed(0)}" data-seg-tools="${segTools}" data-seg-label="${esc(c.label || '')}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"></rect>`;
+        return `<rect role="button" aria-label="${s.kind === 'tool' ? 'Tool execution' : 'Inference'} step ${si + 1} · ${fmtMs(s.endMs - s.startMs)} — click for detail" data-call-idx="${i}" data-seg-idx="${si}" data-seg-kind="${s.kind}" data-seg-dur="${(s.endMs - s.startMs).toFixed(0)}" data-seg-tools="${segTools}" data-seg-label="${esc(c.label || '')}" x="${sx.toFixed(1)}" y="${y + 4}" width="${sw.toFixed(1)}" height="${barH}" fill="${SEG_COLOR[s.kind] || SEG_COLOR.inference}" style="cursor:pointer"></rect>`;
       }).join('');
       // hairline frame so adjacent same-color runs still read as one bar (non-interactive)
       bar += `<rect x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="2" fill="none" stroke="var(--border)" stroke-width="0.5" style="pointer-events:none"></rect>`;
@@ -1721,13 +1732,18 @@ function renderCallDetailInto(slot, c) {
   const traceRows = segs.map((s, n) => {
     const isTool = s.kind === 'tool';
     const dot = isTool ? SEG_COLOR.tool : SEG_COLOR.inference;
+    // A tool step is the OUTPUT of the inference right above it — chain them visually:
+    // inference rows preview what they decided to run; tool rows indent under them.
+    const decided = !isTool && segs[n + 1] && segs[n + 1].kind === 'tool' && segs[n + 1].tools && segs[n + 1].tools.length
+      ? `<span class="trace-decided">→ ${esc(segs[n + 1].tools.join(', '))}</span>` : '';
     const name = isTool
       ? (s.tools && s.tools.length ? 'Tool · ' + esc(s.tools.join(', ')) : 'Tool execution')
       : 'Inference';
-    return `<div class="trace-row" data-trace-idx="${n}" title="Click to see exactly what this step did">`
+    return `<div class="trace-row${isTool ? ' trace-row-tool' : ''}" data-trace-idx="${n}" title="Click to see exactly what this step did">`
       + `<span class="mono" style="color:var(--gray-500);min-width:22px;text-align:right">${n + 1}</span>`
+      + (isTool ? '<span class="trace-connector">└</span>' : '')
       + `<span class="tl-tip-dot" style="background:${dot}"></span>`
-      + `<span style="color:var(--gray-1000);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>`
+      + `<span style="color:var(--gray-1000);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}${decided}</span>`
       + `<span class="mono" style="color:var(--gray-900)">${fmtMs(s.endMs - s.startMs)}</span></div>`;
   }).join('');
   const traceSection = segs.length
@@ -2450,6 +2466,7 @@ function renderSessionNodes() {
       const glyph = folded ? '▸' : '▾';
       const badge = folded ? ' ' + node.children.length : '';
       fold = `<g class="sfold" data-fold="${esc(node.id)}">`
+        + `<title>${folded ? 'Expand' : 'Collapse'} in place (does not navigate away)</title>`
         + `<rect x="${px + BOX_W - 30}" y="${py}" width="30" height="${BOX_H}" fill="transparent"/>`
         + `<text x="${px + BOX_W - 26}" y="${py + 12}" style="font-size:9px;fill:var(--gray-700)">${glyph}${esc(badge)}</text></g>`;
     }
@@ -2570,9 +2587,9 @@ function siDur(ms) {
   if (s >= 60) return `${Math.round(s / 60)}m`;
   return `${Math.round(s)}s`;
 }
-const MODEL_ORDER = ['opus', 'sonnet', 'haiku', 'other'];
-// Mirrors the server's tierFromModel: fable is priced/bucketed as opus tier.
-function modelTier(m) { m = String(m || '').toLowerCase(); return (m.includes('opus') || m.includes('fable')) ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other'; }
+const MODEL_ORDER = ['fable', 'opus', 'sonnet', 'haiku', 'other'];
+// Mirrors the server's tierFromModel — fable is its OWN tier ($10/$50, 2× opus).
+function modelTier(m) { m = String(m || '').toLowerCase(); return m.includes('fable') ? 'fable' : m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other'; }
 function modelColor(tier) { return tier === 'other' ? '#8a8f98' : tierColor(tier); }
 // Per-item cost split by model: {opus: $, sonnet: $, ...}. Workflows need their fetched
 // telemetry.calls; subagents carry a single model. Returns null if a workflow's detail
@@ -2591,16 +2608,17 @@ function itemModelSplit(item, wfDetails) {
 // apples-to-apples with our cache-aware current cost. cacheWr isn't separately listed for
 // these models, so it's billed at the prompt rate (small vs cacheRd, and conservative).
 const SUBSTITUTE = {
+  fable: { name: 'GLM-5.2', or: 'z-ai/glm-5.2', prompt: 0.93, completion: 3.00, cacheRd: 0.18 },
   opus: { name: 'GLM-5.2', or: 'z-ai/glm-5.2', prompt: 0.93, completion: 3.00, cacheRd: 0.18 },
   sonnet: { name: 'DeepSeek V4 Flash', or: 'deepseek/deepseek-v4-flash', prompt: 0.098, completion: 0.196, cacheRd: 0.02 },
   haiku: { name: 'GLM-4.7 Flash', or: 'z-ai/glm-4.7-flash', prompt: 0.06, completion: 0.40, cacheRd: 0.01 },
 };
 const SUBSTITUTE_ASOF = '2026-07-01';
 // Anthropic list prices ($ per MILLION tokens) used for the current-cost estimate.
-// Mirrors workflow-lens/src/shim.mjs PRICE; verified 2026-07-01 against OpenRouter's
-// Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5 (in/out and cache read/write all match).
-// cache-write = in × 1.25, cache-read = in × 0.10 (matches real Anthropic cache pricing).
-const ANTHROPIC_PRICE = { opus: { in: 5, out: 25 }, sonnet: { in: 3, out: 15 }, haiku: { in: 1, out: 5 } };
+// Mirrors workflow-lens/src/shim.mjs PRICE; verified 2026-07-01 against the LiteLLM
+// price DB + ccusage (fable-5 $10/$50 incl.). Cache-read = in × 0.10; cache-WRITE is
+// priced by TTL bucket server-side: 5-minute ×1.25, 1-hour ×2.0.
+const ANTHROPIC_PRICE = { fable: { in: 10, out: 50 }, opus: { in: 5, out: 25 }, sonnet: { in: 3, out: 15 }, haiku: { in: 1, out: 5 } };
 // Aggregate real token usage per tier (input/output/cache) across workflow calls + direct
 // subagents — needed to re-price under a substitute model. Skips workflows without loaded detail.
 function sessionTierUsage(workflows, sub, wfDetails) {
@@ -2635,7 +2653,7 @@ function tierGenSpeed(usage, tier) {
 function computeSavings(workflows, sub, wfDetails) {
   const usage = sessionTierUsage(workflows, sub, wfDetails);
   const lines = []; let cur = 0, alt = 0;
-  for (const tier of ['opus', 'sonnet', 'haiku']) {
+  for (const tier of ['fable', 'opus', 'sonnet', 'haiku']) {
     const u = usage[tier], s = SUBSTITUTE[tier];
     if (!u || !s || !u.cost) continue;
     const cacheRdRate = s.cacheRd != null ? s.cacheRd : s.prompt;
@@ -2772,13 +2790,13 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   // "*" methodology section — where every number comes from, and the idea behind it.
   let method = '';
   if (savings) {
-    const curList = savings.lines.map((l) => { const p = ANTHROPIC_PRICE[l.tier]; return `<li><strong>${l.tier}</strong>: $${p.in}/M in · $${p.out}/M out · $${(p.in * 1.25).toFixed(2)}/M cache-write (in×1.25) · $${(p.in * 0.10).toFixed(2)}/M cache-read (in×0.10)</li>`; }).join('');
+    const curList = savings.lines.map((l) => { const p = ANTHROPIC_PRICE[l.tier]; return `<li><strong>${l.tier}</strong>: $${p.in}/M in · $${p.out}/M out · $${(p.in * 1.25).toFixed(2)}/M cache-write (in×1.25 for 5-min cache, ×2.0 for 1-hour) · $${(p.in * 0.10).toFixed(2)}/M cache-read (in×0.10)</li>`; }).join('');
     const subList = savings.lines.map((l) => { const s = l.sub; return `<li><strong>${l.tier}</strong> → ${esc(s.name)} (<code>${esc(s.or)}</code>): $${s.prompt}/M in · $${s.completion}/M out · $${s.cacheRd}/M cache-read · cache-write at in rate</li>`; }).join('');
     method = `<details class="si-method" id="si-method">`
       + `<summary>* How “potential savings” is calculated &amp; where the prices come from</summary>`
       + `<div class="si-method-body">`
       + `<p><strong>Your current cost</strong> is reconstructed from the real token counts in each run's transcript (input, output, cache-write, cache-read), priced <em>per token</em> at Anthropic's published rates, cache-aware:</p>`
-      + `<p class="si-method-formula"><code>cost = input×in + cache_write×in×1.25 + cache_read×in×0.10 + output×out</code></p>`
+      + `<p class="si-method-formula"><code>cost = input×in + cache_write_5m×in×1.25 + cache_write_1h×in×2.0 + cache_read×in×0.10 + output×out</code></p>`
       + `<p><strong>Current model prices</strong> (Anthropic list, $ per million tokens — verified against OpenRouter ${SUBSTITUTE_ASOF}, matching Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5):</p><ul class="si-method-list">${curList}</ul>`
       + `<p>It's an estimate reconstructed from token counts, not a billed invoice.</p>`
       + `<p><strong>The substitute cost</strong> re-prices those <em>same</em> token counts at an open model's <strong>OpenRouter list price</strong> (captured ${SUBSTITUTE_ASOF}), the identical cache-aware way — (input + cache-write) at the prompt rate, cache-read at the model's cached-input rate, output at the completion rate. Because most agent tokens are cache reads (re-sent context), a model's <em>cached-input</em> price — not its headline price — usually decides the comparison.</p>`
@@ -2871,16 +2889,21 @@ function buildSessionWaterfallSvg(workflows, sub) {
 async function navigateToRun(runId) {
   document.querySelector('.tabbar-btn[data-tab="observe"]')?.click();
   const sel = (window.CSS && CSS.escape) ? CSS.escape(runId) : runId;
-  // Poll until loadObservedList has rendered the row (localhost fetch is fast, but async).
-  for (let i = 0; i < 25; i++) {
+  // Poll until loadObservedList has rendered the row. A COLD server scan of a big
+  // session can take well over 2s — the old 2s window expired silently and the jump
+  // landed on an unexpanded list with no cue (walker finding F-019-1). 15s window +
+  // a flash on arrival so it's obvious WHICH run was jumped to (names repeat).
+  for (let i = 0; i < 150; i++) {
     const item = observedEls.list?.querySelector(`.obs-run-item[data-run-id="${sel}"]`);
     if (item) {
       const row = item.querySelector('.obs-run-row');
       if (row && row.getAttribute('aria-expanded') !== 'true') toggleItem(item);
-      item.querySelector('.obs-run-row')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row?.classList.add('obs-row-flash');
+      setTimeout(() => row?.classList.remove('obs-row-flash'), 2400);
       return;
     }
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 100));
   }
 }
 async function navigateToSubagent(agentId) {
@@ -3031,7 +3054,10 @@ function sessDayLabel(ms) {
 }
 function sessClock(ms) { return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }); }
 function renderSessionsList() {
-  const list = document.getElementById('sessions-list'); if (!list || !sessionsData) return;
+  const list = document.getElementById('sessions-list'); if (!list) return;
+  // Never silently no-op with a stale DOM: if the data was cleared (session switch,
+  // project switch) re-fetch instead — a visible-but-dead toggle was walker F-STORY-004-1.
+  if (!sessionsData) { loadSessionsList(); return; }
   const all = sessionsData.sessions || [];
   const activeId = sessionsData.activeSessionId;
   if (!all.length) { list.innerHTML = ctEmptyHtml('No sessions in this folder yet', 'Run Claude Code in this project and its sessions will appear here.', ''); return; }
@@ -3057,7 +3083,7 @@ function renderSessionsList() {
       const badges = []
       if (s.workflows) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
       if (s.subagents) badges.push(`<span class="sess-badge" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
-      const activePill = s.id === activeId ? '<span class="sess-active-pill">active</span>' : '';
+      const activePill = s.id === activeId ? '<span class="sess-active-pill" title="This is the session the Active Session / Workflows / Subagents tabs are currently showing">active</span>' : '';
       const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
       const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
       html += `<button class="sess-row${ghost}" type="button" data-session-id="${esc(s.id)}" title="${esc(s.id)}${s.cwd ? ' · ' + esc(s.cwd) : ''}">`
@@ -3072,7 +3098,10 @@ function renderSessionsList() {
     html += '</div>';
   }
   if (hiddenCount > 0 || showEmptySessions) {
-    html += `<button class="sess-empty-toggle" type="button" id="sess-empty-toggle">${showEmptySessions ? 'Hide' : `Show`} ${hiddenCount || ''} empty session${hiddenCount === 1 ? '' : 's'}${showEmptySessions ? '' : ' (no turns, no cost)'}</button>`;
+    const shownEmpties = all.filter(isEmpty).length;
+    html += `<button class="sess-empty-toggle" type="button" id="sess-empty-toggle" aria-pressed="${showEmptySessions}">`
+      + (showEmptySessions ? `Hide the ${shownEmpties} empty session${shownEmpties === 1 ? '' : 's'}` : `Show ${hiddenCount} empty session${hiddenCount === 1 ? '' : 's'} (no turns, no cost)`)
+      + `</button>`;
   }
   if (sessionsData.totalSessions > all.length) html += `<div class="muted" style="font-size:11px;padding:6px 4px">Showing the ${all.length} most recent of ${sessionsData.totalSessions} sessions.</div>`;
   list.innerHTML = html;

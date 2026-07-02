@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 
 export const MODELS = { haiku: 'claude-haiku-4-5-20251001', sonnet: 'claude-sonnet-4-6', opus: 'claude-opus-4-8', fable: 'claude-opus-4-8' }
 // $/Mtok. Mirrors the live-measured price table; ledger.mjs derives costUsd from this.
-export const PRICE = { haiku: { in: 1.0, out: 5.0 }, sonnet: { in: 3.0, out: 15.0 }, opus: { in: 5.0, out: 25.0 } }
+export const PRICE = { haiku: { in: 1.0, out: 5.0 }, sonnet: { in: 3.0, out: 15.0 }, opus: { in: 5.0, out: 25.0 }, fable: { in: 10.0, out: 50.0 } }
 
 // Strip `export ` off the meta declaration and async-function-wrap the body so a
 // top-level `return` / `await` is legal. Returns the raw src + the callable fn.

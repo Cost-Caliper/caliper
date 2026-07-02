@@ -1,0 +1,16 @@
+[
+  {
+    "id": "F-015-1",
+    "story_id": "STORY-015",
+    "severity": "medium",
+    "category": "ux-discoverability",
+    "criterion": "A first-timer can tell apart 'expand this node in place' from 'navigate to this item's own tab' before clicking",
+    "score": 3,
+    "description": "Each Nodes-view row is actually two separate SVG hit-targets stacked on the same visual rectangle: the node body (class 'snode', has an accessible <title>, data-nav-kind='wf'/'sub', cursor:pointer over the WHOLE rect) which navigates to the Workflows/Subagents tab and opens the run there, and a small fold chevron (class 'sfold', nested inside the node, NO text label and not exposed in the accessibility tree at all) which expands/collapses the node in place inside the Nodes tree. The caveat copy directly under the canvas literally documents both behaviors in the same sentence ('click ▸ to open one, or Expand all... Click a workflow/subagent to open it') but visually nothing distinguishes the two click zones except the tiny chevron glyph, and cursor:pointer is applied to the entire node rect rather than being scoped to the chevron, so the whole row reads as one uniform button.",
+    "expected": "Clicking anywhere reasonably chevron-adjacent expands in place; clicking the node label/body navigates away. Ideally the two targets would have visually distinct affordances (e.g. only the chevron shows cursor:pointer + hover state, or the fold control is a visually separate button, not part of the same bordered rect as the label).",
+    "actual": "First test click (via accessibility ref on the node group) landed on the node body and navigated straight to the Workflows tab instead of expanding in place, which was surprising given the on-screen 'click ▸ to expand' hint. Confirmed via DOM inspection that the real fold chevron is a separate nested element with no accessible name/label.",
+    "screenshot": "docs/ux-walker/stories/STORY-015/screenshots/04-nodes-one-expanded.png",
+    "suggested_fix": "Give the fold chevron its own discoverable hit area (e.g. a slightly larger click target with its own hover/focus state and an aria-label like 'Expand degree-build') so it's visually and programmatically distinct from the node-body navigate action. Consider adding an aria-label or role to the .sfold group so screen-reader/automation users can find it.",
+    "files_likely_involved": []
+  }
+]
