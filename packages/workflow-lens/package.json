@@ -31,6 +31,6 @@
     "lint:self": "node bin/workflow-lens.mjs lint examples/fanout.workflow.js"
   },
   "dependencies": {
-    "acorn": "^8.17.0"
+    "acorn": "8.17.0"
   }
 }

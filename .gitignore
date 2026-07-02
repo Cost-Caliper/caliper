@@ -5,3 +5,4 @@ examples/out/
 .edited/
 *.log
 .DS_Store
+brag-output*/
