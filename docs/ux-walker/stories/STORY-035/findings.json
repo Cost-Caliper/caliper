@@ -1,0 +1,17 @@
+[
+  {
+    "id": "F-035-1",
+    "story_id": "STORY-035",
+    "severity": "low",
+    "category": "visual-consistency",
+    "criterion": "Selection state stays accurate as the user navigates away from a subagent",
+    "score": 3,
+    "description": "The Tree view's selected-subagent highlight (a thicker green node border, stroke-width 2.5 vs 1.25 for unselected) is never cleared or moved when the user navigates away from that subagent via the breadcrumb ('↑ main conversation' or '← all subagents'). The node keeps looking 'selected' even though the detail slot now shows main-session data or nothing at all.",
+    "failure_scenario": "User drills into Subagent A, then clicks '↑ main conversation' to inspect the main session instead. The tree still shows Subagent A with a thick green border as if it were still the active selection, which could make the user think they are still looking at Subagent A's data, or wonder why the highlighted node doesn't match what the detail panel is showing.",
+    "expected": "When main conversation is selected, no subagent node should show the 'selected' border (or MAIN_SESSION's own node should pick it up instead). When nothing is selected ('← all subagents'), no node should carry the selected-border style.",
+    "actual": "The previously-clicked subagent node keeps its thick green selection border indefinitely, reproduced twice with two different subagents across both the 'main conversation' and 'all subagents' breadcrumb actions.",
+    "screenshot": "docs/ux-walker/stories/STORY-035/screenshots/08-back-to-list.png",
+    "suggested_fix": "Clear the selected-node stroke style whenever selection state changes to __MAIN_SESSION__ or null, driven from the same state that updates the breadcrumb.",
+    "files_likely_involved": ["packages/dashboard-web (or similar) subagents tree renderer / selection state logic"]
+  }
+]

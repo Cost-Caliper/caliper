@@ -1,0 +1,65 @@
+{
+  "story": "STORY-060",
+  "title": "Savings methodology (\"*\") audit",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "id": "F-STORY-060-1",
+      "severity": "low",
+      "category": "happy-path",
+      "criterion": "Labels/copy self-explanatory / navigation user always knows where they are",
+      "score": "warn",
+      "description": "Two visually similar '*' affordances appear near 'Potential savings' — a small superscript dot on the POTENTIAL SAVINGS stat tile, and the actual clickable '* How \"potential savings\" is calculated...' details summary further down. Only the latter is interactive.",
+      "expected": "A single, consistently-styled entry point for the methodology disclosure, or the stat-tile asterisk should also be clickable / visually distinguished as non-interactive.",
+      "actual": "The stat-tile asterisk is not clickable; a skeptical user may click it first and get no response before finding the real summary link below.",
+      "screenshot": "screenshots/02-insight-headline.png",
+      "suggested_fix": "Either make the stat-tile asterisk also scroll to / open the details element, or restyle it (e.g. remove the dot, use a footnote-style superscript without underline) so it doesn't imply interactivity.",
+      "files_likely_involved": ["src (insight card / savings panel component)"]
+    },
+    {
+      "id": "F-STORY-060-2",
+      "severity": "suggestion",
+      "category": "happy-path",
+      "criterion": "Labels/copy self-explanatory",
+      "score": "warn",
+      "description": "Cache-write price line reads 'in×1.25 for 5-min cache, ×2.0 for 1-hour' — the second multiplier omits the 'in' term, breaking the parallel structure and inviting a misread (e.g. reading ×2.0 as relative to the 5-min price rather than to input price).",
+      "expected": "Parallel phrasing, e.g. 'in×1.25 (5-min cache) / in×2.0 (1-hour cache)'.",
+      "actual": "'in×1.25 for 5-min cache, ×2.0 for 1-hour' — asymmetric wording.",
+      "screenshot": "screenshots/03-methodology-expanded.png",
+      "suggested_fix": "Repeat the 'in×' prefix on the second multiplier for symmetry.",
+      "files_likely_involved": ["src (methodology copy / savings panel component)"]
+    }
+  ],
+  "verification": {
+    "formula_matches_spec": true,
+    "formula_text": "cost = input×in + cache_write_5m×in×1.25 + cache_write_1h×in×2.0 + cache_read×in×0.10 + output×out",
+    "current_prices_present": true,
+    "current_prices_dated_and_versioned": "verified against OpenRouter 2026-07-01, matching Claude Opus 4.8 / Sonnet 4.6 / Haiku 4.5",
+    "fable_tier_present": false,
+    "fable_tier_note": "No fable usage in this session, so no fable row rendered — consistent with documented conditional behavior",
+    "substitute_prices_have_openrouter_ids": true,
+    "openrouter_ids_seen": ["z-ai/glm-5.2", "deepseek/deepseek-v4-flash", "z-ai/glm-4.7-flash"],
+    "caveat_present": true,
+    "caveat_text": "whether an open model would do the work as well. It assumes identical token usage; a cheaper model may need more attempts or produce worse results, which erodes the saving. Treat it as a ceiling on token economics, not a promise — and prices change, so re-check OpenRouter.",
+    "as_of_date_renders": true,
+    "as_of_date_value": "2026-07-01",
+    "as_of_date_matches_today": true,
+    "aggregate_math_reproducible": true,
+    "aggregate_math_check": {
+      "before_total_computed": 264.16,
+      "before_total_displayed": 265,
+      "after_total_computed": 63.653,
+      "after_total_displayed": 63.66,
+      "savings_computed": 200.507,
+      "savings_displayed": 201,
+      "pct_computed": 75.9,
+      "pct_displayed": 76,
+      "multiple_computed": 4.15,
+      "multiple_displayed": 4.2
+    },
+    "per_tier_token_counts_not_shown": true,
+    "per_tier_token_counts_note": "Panel discloses the formula and prices, not each tier's raw token ledger — disclosed limitation, not an overclaim",
+    "console_errors": 0,
+    "network_errors": 0
+  }
+}

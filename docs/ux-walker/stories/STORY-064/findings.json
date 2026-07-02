@@ -1,0 +1,62 @@
+{
+  "story": "STORY-064",
+  "title": "Trace a dollar end-to-end",
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "id": "F-STORY-064-1",
+      "severity": "critical",
+      "category": "happy-path",
+      "criterion": "Feedback: clear success/error indication after an action; Navigation: user always knows where they are",
+      "score": "fail",
+      "description": "Clicking an insight-leaderboard bar navigates to the Workflows tab and sets hash #/observe/<runId>. On the FIRST navigation to a given run this correctly expands the matching accordion row (aria-expanded=true) with a flash/highlight. On every subsequent click of the SAME leaderboard bar (after navigating away to Active Session and back), the hash is set to the identical value, the Workflows tab activates, but the target row does NOT expand (aria-expanded=false on all rows) and a different, unrelated row receives a stray persistent highlight instead of the correct one.",
+      "failure_scenario": "User traces a $40.21 workflow from the insight leaderboard once, switches back to Active Session to check another bar, then returns to re-verify the same $40.21 workflow by clicking its bar again. The Workflows tab opens but the run list stays fully collapsed and a random unrelated run row is highlighted — the user cannot find the run they clicked without manually scrolling and expanding it themselves, defeating the entire point of the click-to-navigate affordance for a repeat-check / audit workflow.",
+      "expected": "Every click of a leaderboard bar (first or repeat) auto-expands + scrolls to + briefly flashes the matching Workflows row, regardless of whether the hash value is changing from its current value.",
+      "actual": "Only the first navigation to a given run's hash reliably expands/flashes it; identical repeat navigations are silently no-ops on the expand/scroll/flash behavior, and instead a stray highlight lands on an unrelated row.",
+      "screenshot": "screenshots/06-BUG-repeat-click-no-expand.png",
+      "suggested_fix": "The expand/scroll/flash effect is likely gated on a hash-change event (React effect keyed on location.hash changing). Re-key the effect on a monotonically-increasing nonce/counter set on every click (not just hash equality), or force-reset the hash to a sentinel value before setting the target hash so a genuine change event always fires.",
+      "files_likely_involved": ["src (Workflows tab / observed-runs navigation handler, hash-routing effect)"],
+      "verdict": "CONFIRMED"
+    },
+    {
+      "id": "F-STORY-064-2",
+      "severity": "low",
+      "category": "happy-path",
+      "criterion": "Labels/copy self-explanatory (test-script clarity, not app bug)",
+      "score": "warn",
+      "description": "The story setup ('insight leaderboard biggest bar → ... Workflows tab') assumes the biggest bar is always a workflow. In this session (and likely most sessions with an active main conversation), the single biggest leaderboard bar is the main conversation, which correctly routes to the main trace (per STORY-019/067), not the Workflows tab.",
+      "failure_scenario": "A walker or new user following this story literally clicks the true biggest bar and lands on the main conversation trace instead of the Workflows tab, appearing to contradict the story's expected outcome — though the app's behavior is actually correct and consistent with its own documented routing rules.",
+      "expected": "Story guidance should say 'biggest workflow bar' explicitly, or the app could disambiguate main-conversation vs. workflow items more prominently in the leaderboard so this isn't a fixable-vs-expected ambiguity for testers.",
+      "actual": "Ambiguous instruction; resolved by manually choosing the biggest workflow-typed bar instead.",
+      "screenshot": "screenshots/01-leaderboard-top.png",
+      "suggested_fix": "Update the UX-path catalog wording for this story to say 'biggest workflow/subagent bar' rather than 'biggest bar' to avoid confusion with the main-conversation item, which has its own dedicated trace destination.",
+      "files_likely_involved": ["docs/ux-paths/catalog.md", "docs/ux-paths/topics/cost-analysis.md"]
+    }
+  ],
+  "verification": {
+    "leaderboard_biggest_overall": {"label": "main conversation (this chat)", "cost": 97.64, "pct": 37},
+    "leaderboard_biggest_workflow": {"label": "degree-build", "cost": 40.21, "pct": 15, "agents": 24, "wall": "16m 0s"},
+    "first_click_autoexpand": "PASS — target row expanded (aria-expanded=true), residual flash tint observed",
+    "repeat_click_autoexpand": "FAIL — target row not expanded (aria-expanded=false); wrong row highlighted; reproduced 3x across 2 sessions",
+    "hash_on_click": "#/observe/738d4acc-35fb-492c-bcec-153e4b8d1d68",
+    "hash_stable_across_repeat_clicks": true,
+    "per_call_table_row_count": 24,
+    "per_call_costs_sum": 40.216,
+    "run_cost_displayed": 40.21,
+    "run_cost_precise": 40.208965,
+    "per_call_sum_matches_run_cost": true,
+    "priciest_call": {"label": "build:gemini", "cost": 4.98, "cost_precise": 4.97714, "model": "opus-4-8", "wall": "14m 56s", "tokIn": 13049, "tokOut": 37764},
+    "row_click_opens": "agent-level Call details drawer (not a step-level drawer)",
+    "priciest_step_within_agent": {"label": "Inference step 75", "duration": "26s", "cost_displayed": 0.115},
+    "step_cost_formula_reproduction": {
+      "input_tok": 2, "output_tok": 1954, "cache_read_tok": 118000, "cache_write_tok": 1000,
+      "opus_rates_per_million": {"in": 5, "out": 25, "cache_write_5m": 6.25, "cache_read": 0.5},
+      "computed_cost": 0.11411,
+      "displayed_cost": 0.115,
+      "matches": true
+    },
+    "run_cost_matches_leaderboard_bar": true,
+    "console_errors": 0,
+    "network_errors": 0
+  }
+}

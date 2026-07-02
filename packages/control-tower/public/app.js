@@ -1516,6 +1516,11 @@ async function loadObservedList() {
     if (!runs.length) setWatchingHint('observed-empty-hint');
   } catch (err) {
     observedEls.list.innerHTML = `<p class="muted" style="padding:12px">Could not load observed runs: ${esc(err.message)}</p>`;
+  } finally {
+    // Render generation marker: navigateToRun must NOT act on rows from a previous
+    // render — expanding a stale row that this reload is about to wipe was walker
+    // finding F-064 (repeat navigation silently failed / flashed the wrong row).
+    if (observedEls.list) observedEls.list.dataset.renderGen = String((Number(observedEls.list.dataset.renderGen) || 0) + 1);
   }
 }
 
@@ -2199,6 +2204,7 @@ function renderSubagentDetail(detail) {
 document.getElementById('tab-subagents')?.addEventListener('click', (e) => {
   if (e.target.closest('[data-crumb-back]')) {
     const slot = subEls.slot(); if (slot) slot.hidden = true;
+    subSelectedId = null; if (subView !== 'table') renderSubView(); // clear the selection highlight
     subEls.wrap()?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     pushNav(null); // record "back at the list" so browser Back/Forward stays coherent
     return;
@@ -2207,6 +2213,9 @@ document.getElementById('tab-subagents')?.addEventListener('click', (e) => {
 });
 
 async function selectSubagent(agentId) {
+  // Keep the graph/tree highlight in sync with what the detail actually shows —
+  // a stale green "selected" node after moving on was walker finding F-035-1.
+  if (subSelectedId !== agentId) { subSelectedId = agentId; if (subView !== 'table') renderSubView(); }
   let detail = subCache.get(agentId);
   if (!detail) {
     try { const res = await fetch(`/v1/subagents/${encodeURIComponent(agentId)}`); if (!res.ok) throw new Error('HTTP ' + res.status); detail = await res.json(); }
@@ -2887,6 +2896,9 @@ function buildSessionWaterfallSvg(workflows, sub) {
 
 // Navigate from the waterfall to an item's own tab + open it.
 async function navigateToRun(runId) {
+  // Snapshot the render generation BEFORE switching tabs: setTab('observe') always
+  // reloads the list, and acting on a row from the outgoing render gets wiped.
+  const genBefore = observedEls.list?.dataset.renderGen || '0';
   document.querySelector('.tabbar-btn[data-tab="observe"]')?.click();
   const sel = (window.CSS && CSS.escape) ? CSS.escape(runId) : runId;
   // Poll until loadObservedList has rendered the row. A COLD server scan of a big
@@ -2894,7 +2906,8 @@ async function navigateToRun(runId) {
   // landed on an unexpanded list with no cue (walker finding F-019-1). 15s window +
   // a flash on arrival so it's obvious WHICH run was jumped to (names repeat).
   for (let i = 0; i < 150; i++) {
-    const item = observedEls.list?.querySelector(`.obs-run-item[data-run-id="${sel}"]`);
+    const fresh = (observedEls.list?.dataset.renderGen || '0') !== genBefore;
+    const item = fresh ? observedEls.list?.querySelector(`.obs-run-item[data-run-id="${sel}"]`) : null;
     if (item) {
       const row = item.querySelector('.obs-run-row');
       if (row && row.getAttribute('aria-expanded') !== 'true') toggleItem(item);

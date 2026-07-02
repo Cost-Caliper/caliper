@@ -1,1 +1,97 @@
-{"runs":[],"stories":{}}
+{
+  "runs": [
+    {
+      "timestamp": "2026-07-01T22:30:00Z",
+      "url": "http://localhost:8787",
+      "stories_walked": 16,
+      "stories_skipped": 51,
+      "findings_total": 14,
+      "quick_fixes_applied": 10,
+      "issues_filed": 0,
+      "stories_passed": 13,
+      "stories_failed_then_fixed": 3
+    }
+  ],
+  "stories": {
+    "STORY-001": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-002": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-004": {
+      "last_walked": "2026-07-01",
+      "status": "fixed",
+      "findings_count": 0
+    },
+    "STORY-010": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-011": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-015": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-018": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-019": {
+      "last_walked": "2026-07-01",
+      "status": "fixed",
+      "findings_count": 0
+    },
+    "STORY-025": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-032": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-035": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-046": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-048": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-049": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-060": {
+      "last_walked": "2026-07-01",
+      "status": "pass",
+      "findings_count": 0
+    },
+    "STORY-064": {
+      "last_walked": "2026-07-01",
+      "status": "fixed",
+      "findings_count": 0
+    }
+  }
+}

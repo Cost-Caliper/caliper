@@ -1,0 +1,17 @@
+[
+  {
+    "id": "F-032-1",
+    "story_id": "STORY-032",
+    "severity": "low",
+    "category": "visual-clarity",
+    "criterion": "Control state is obvious at a glance",
+    "score": 3,
+    "description": "The Tree/Timeline/Table view seg-control and the separate Flatten modifier toggle sit in the same button row and share identical 'active' styling (white background, same size/shape), even though they represent two different kinds of state: a mutually-exclusive view selector vs. an independent on/off modifier.",
+    "failure_scenario": "A user glancing at the control bar with Table + Flatten both highlighted white may read it as 'four buttons, two of which happen to be on' rather than realizing Flatten is a modifier that persists across view switches — they may click Flatten expecting it to just be another view mode, or not realize unflattening will return them to whichever view (Tree or Table) they last had active.",
+    "expected": "Some visual separation (grouping, divider, or distinct active-state color) between the view-mode segmented control and the Flatten toggle so their different roles are legible without reading the tooltip or aria state.",
+    "actual": "Both button groups use the same .seg-btn/.active and .btn.active white-highlight treatment in the same row with only whitespace separating them.",
+    "screenshot": "docs/ux-walker/stories/STORY-032/screenshots/01-flatten-on-table.png",
+    "suggested_fix": "Add a vertical divider or a subtle background box around the Tree/Timeline/Table group to distinguish it from the Expand/Collapse/Flatten/Refresh action group, or give Flatten's active state a different accent color than the view-mode active state.",
+    "files_likely_involved": ["packages/dashboard-web (or similar) subagents tab view", "app.css seg-btn / btn-tertiary active styles"]
+  }
+]
