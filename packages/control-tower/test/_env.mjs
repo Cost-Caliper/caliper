@@ -1,17 +1,15 @@
-// test/_env.mjs — sandbox HOME for the whole test process.
+// test/_env.mjs — HOME sandbox for tests that (transitively) load src/sessions.mjs.
+// sessions.mjs computes its disk-cache path (CACHE_FILE) from homedir() at module-load
+// time and checkpoints session summaries there (saveDiskCache fires when an aggregate
+// scan completes) — pointing HOME at a throwaway temp dir keeps test runs from ever
+// reading or writing the real ~/.cache/workflow-lens.
 //
-// sessions.mjs persists session summaries to ~/.cache/workflow-lens/ (checkpoint
-// every 200 summaries + at aggregate-scan completion). Without this, tests that
-// drive summarizeSessionFile/aggregateMachine write their synthetic mkdtemp
-// fixtures into the REAL user cache (observed: 27 dead /var/folders entries in
-// session-summaries-v6.json) and read the user's warm cache, which can mask
-// parse regressions behind cache hits.
-//
-// Import this FIRST — before any import of ../src/sessions.mjs — so CACHE_FILE
-// (computed from os.homedir() at module load) lands in the sandbox. node --test
-// runs each test file in its own process, so the override is per-file.
+// MUST be the FIRST import of the test file (ESM executes module bodies in import
+// order, so this runs before sessions.mjs resolves homedir()).
 import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-process.env.HOME = mkdtempSync(join(tmpdir(), 'ct-sandbox-home-'))
+const sandbox = mkdtempSync(join(tmpdir(), 'ct-test-home-'))
+process.env.HOME = sandbox        // POSIX homedir()
+process.env.USERPROFILE = sandbox // Windows homedir()
