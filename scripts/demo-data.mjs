@@ -54,12 +54,21 @@ function session(projDir, { title, tier, daysAgo, mins, turns, scale, subs = [],
     const sd = join(projDir, id)
     if (subs.length) {
       mkdirSync(join(sd, 'subagents'), { recursive: true })
-      for (const desc of subs) {
+      subs.forEach((desc, si) => {
         const aid = hex()
+        const subTier = si % 2 ? 'haiku' : 'sonnet'
         writeFileSync(join(sd, 'subagents', `agent-${aid}.meta.json`), JSON.stringify({ agentType: 'Explore', description: desc, toolUseId: 'tu_' + aid.slice(0, 6) }))
-        const s0 = start + 60000
-        writeFileSync(join(sd, 'subagents', `agent-${aid}.jsonl`), [userLine(new Date(s0).toISOString(), desc), usageLine(new Date(s0 + 90000).toISOString(), MODELS.haiku, 'req_s', { inTok: 900, out: 2200, cw: 9000, cr: 140000 })].join('\n'))
-      }
+        // stagger starts and give each sub a few turns over 3-9 minutes so
+        // waterfalls/durations render like real usage
+        const s0 = start + 60000 + si * 150000
+        const durMs = (3 + Math.floor(rnd() * 6)) * 60000
+        const subLines = [userLine(new Date(s0).toISOString(), desc)]
+        for (let k = 1; k <= 3; k++) {
+          subLines.push(usageLine(new Date(s0 + (k / 3) * durMs).toISOString(), MODELS[subTier], 'req_s' + k,
+            { inTok: 600 + Math.floor(rnd() * 900), out: 900 + Math.floor(rnd() * 1800), cw: 6000 + Math.floor(rnd() * 8000), cr: 90000 + Math.floor(rnd() * 120000) }))
+        }
+        writeFileSync(join(sd, 'subagents', `agent-${aid}.jsonl`), subLines.join('\n'))
+      })
     }
     // Workflow agent() fan-out: N parallel Fable agents, each declined by the classifier
     // then re-served on Opus — the real story is that MOST switches live here.

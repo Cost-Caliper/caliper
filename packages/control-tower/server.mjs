@@ -950,6 +950,45 @@ async function handle(req, res) {
     return
   }
 
+  // ── Session-scoped drill-down for ANY session (v2 UI) ────────────────────────
+  // The routes above are bound to the ACTIVE session dir; the v2 frontend drills
+  // into arbitrary sessions, so these take ?slug=<projectSlug>&id=<sessionId>.
+  if (method === 'GET' && (urlPath === '/v1/session-scope/subagents' || urlPath === '/v1/session-scope/observed' || /^\/v1\/session-scope\/observed\/[^/]+$/.test(urlPath))) {
+    const q = new URL(url, 'http://x').searchParams
+    const slug = String(q.get('slug') || '')
+    const id = String(q.get('id') || '')
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || !slug || slug.includes('/') || slug.includes('..')) {
+      jsonErr(res, 'BAD_REQUEST', 'slug and uuid id query params required', 400); return
+    }
+    const sessDir = join(PROJECTS_ROOT, slug, id)
+    if (urlPath === '/v1/session-scope/subagents') { jsonOk(res, scanSubagentTree(sessDir)); return }
+    if (urlPath === '/v1/session-scope/observed') {
+      let runs = []
+      try { runs = scanCompletedRuns(sessDir) || [] } catch { runs = [] }
+      jsonOk(res, runs.map((r) => ({
+        runId: r.runId, name: r.name, status: r.status, agentCount: r.agentCount,
+        costUsd: r.costUsd, durationMs: r.durationMs, totalTokens: r.totalTokens,
+        startedAt: r.startedAt || r.timestamp,
+      })))
+      return
+    }
+    const runId = decodeURIComponent(urlPath.split('/').pop())
+    let full = null
+    try { full = reconstructRun(runId, sessDir) } catch { full = null }
+    if (!full || !full.telemetry) { jsonErr(res, 'NOT_FOUND', `Run "${runId}" not found in session`, 404); return }
+    jsonOk(res, {
+      meta: full.meta, phases: full.phases,
+      run: full.telemetry.run, perPhase: full.telemetry.perPhase,
+      calls: (full.telemetry.calls || []).map((c) => ({
+        id: c.id, label: c.label, tier: c.tier, model: c.model, phase: c.phase, ms: c.ms,
+        inTok: c.inTok, outTok: c.outTok, costUsd: c.costUsd, inferenceMs: c.inferenceMs,
+        toolMs: c.toolMs, turns: c.turns, toolCalls: c.toolCalls,
+        segments: (c.segments || []).map((g) => ({ kind: g.kind, startMs: g.startMs, endMs: g.endMs, tools: g.tools })),
+      })),
+    })
+    return
+  }
+
   // ── Static files (frontend) ────────────────────────────────────────────────
   if (method === 'GET' && serveStatic(req, res)) return
 

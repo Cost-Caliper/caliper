@@ -35,7 +35,7 @@ import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 
-const src = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8')
+const src = readFileSync(new URL('../public/legacy/app.js', import.meta.url), 'utf8')
 
 // ── Extraction (fail-loud; same pattern as app-helpers.test.mjs) ──────────────
 

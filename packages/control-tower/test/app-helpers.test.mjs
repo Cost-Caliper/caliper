@@ -1,4 +1,6 @@
-// test/app-helpers.test.mjs — unit tests for the pure helpers inside public/app.js.
+// test/app-helpers.test.mjs — unit tests for the pure helpers inside the LEGACY UI (public/legacy/app.js).
+// The v2 default UI (public/app.js) has its own suite (tour-sync.test.mjs); these
+// stay green until /legacy/ is removed.
 // app.js is a browser script (not a module), so we extract the helper source by
 // anchored regex and evaluate it in a vm context. Extraction THROWS if a helper
 // disappears/renames — a refactor must fail this suite loudly, never skip silently.
@@ -12,7 +14,7 @@ import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 
-const src = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8')
+const src = readFileSync(new URL('../public/legacy/app.js', import.meta.url), 'utf8')
 
 // Helpers block: esc, fmtUsd, fmtMs, fmtN, fmtNshort, fmtUsdShort (the `$` helper
 // inside only references `document` lazily — safe to evaluate without a DOM).
