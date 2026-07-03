@@ -1792,3 +1792,32 @@ a.brand { text-decoration: none; }
 .si-save-amt strong { font-weight: 700; }
 .si-save-body { padding: 4px 12px 12px; }
 .si-save-subtitle { margin-top: 2px; }
+
+/* ── Home dashboard: metric cards + 2-col chart grid (Mobbin/analytics-dashboard style) ── */
+.agg-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 6px 0 14px;
+}
+.agg-metric {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 13px 15px;
+  background: var(--bg-200);
+}
+.agg-metric-k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--gray-700); }
+.agg-metric-v { font-size: 24px; font-weight: 600; font-family: var(--font-mono); color: var(--gray-1000); margin-top: 4px; letter-spacing: -0.01em; }
+.agg-metric-hero .agg-metric-v { color: var(--blue); }
+.agg-metric-s { font-size: 11px; color: var(--gray-700); margin-top: 3px; }
+.agg-chart-wide { margin-bottom: 12px; }
+.agg-charts-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) {
+  .agg-metrics { grid-template-columns: repeat(2, 1fr); }
+  .agg-charts-2col { grid-template-columns: 1fr; }
+}
+/* model breakdown rows */
+.agg-mrow { display: grid; grid-template-columns: 88px 1fr 52px 38px; gap: 10px; align-items: center; padding: 3px 0; font-size: 12px; }
+.agg-mrow-name { color: var(--gray-1000); display: flex; align-items: center; gap: 6px; text-transform: capitalize; }
+.agg-mrow-val { text-align: right; color: var(--gray-1000); }
+.agg-mrow-pct { text-align: right; color: var(--gray-700); }

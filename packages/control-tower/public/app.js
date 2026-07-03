@@ -3585,11 +3585,13 @@ function renderAggregate(a) {
   const el = document.getElementById('home-agg'); if (!el) return;
   const t = a.totals;
   const prog = a.done ? '' : `<span class="muted" style="font-size:11px;margin-left:10px">scanning… ${fmtN(a.progress.scannedSessions)}/${fmtN(a.progress.totalSessions)} sessions</span>`;
-  const chips = `<div class="agg-chips">`
-    + `<div class="si-chip"><div class="si-chip-k">All-time spend${a.done ? '' : ' (so far)'}</div><div class="si-chip-v">${fmtUsdShort(t.costUsd)}</div><div class="si-chip-s">cache-aware estimate</div></div>`
-    + `<div class="si-chip"><div class="si-chip-k">Sessions</div><div class="si-chip-v">${fmtN(t.sessions)}</div><div class="si-chip-s">${fmtN(t.folders)} folders</div></div>`
-    + `<div class="si-chip"><div class="si-chip-k">Output tokens</div><div class="si-chip-v">${fmtNshort(t.tokens.out)}</div><div class="si-chip-s">${fmtNshort(t.tokens.in)} fresh in</div></div>`
-    + `<div class="si-chip"><div class="si-chip-k">Cache reads</div><div class="si-chip-v">${fmtNshort(t.tokens.cacheRd)}</div><div class="si-chip-s">${fmtNshort(t.tokens.cacheWr)} written</div></div>`
+  // Metric cards — equal-width grid, generous whitespace (StackAI/OpenAI usage style).
+  const metric = (k, v, s, big) => `<div class="agg-metric${big ? ' agg-metric-hero' : ''}"><div class="agg-metric-k">${k}</div><div class="agg-metric-v">${v}</div><div class="agg-metric-s">${s}</div></div>`;
+  const chips = `<div class="agg-metrics">`
+    + metric(`All-time spend${a.done ? '' : ' (so far)'}`, fmtUsdShort(t.costUsd), 'cache-aware estimate', true)
+    + metric('Sessions', fmtN(t.sessions), `${fmtN(t.folders)} folders`)
+    + metric('Output tokens', fmtNshort(t.tokens.out), `${fmtNshort(t.tokens.in)} fresh in`)
+    + metric('Cache reads', fmtNshort(t.tokens.cacheRd), `${fmtNshort(t.tokens.cacheWr)} written`)
     + `</div>`;
 
   // ── Headline banner: getting switched off Fable ────────────────────────────
@@ -3633,16 +3635,23 @@ function renderAggregate(a) {
       + `<span class="si-bar"><span class="si-bar-stack" style="width:${Math.max(2, Math.round((r.costUsd / repoMax) * 100))}%">${segs}</span></span>`
       + `<span class="si-cost mono">${fmtUsdShort(r.costUsd)}</span><span class="agg-repo-sess mono">${fmtN(r.sessions)} sess</span></div>`;
   }).join('');
+  // Model-tier breakdown as labeled bar rows (WRITER "token usage by model" style):
+  // dot + name + proportional bar + $ + %. More scannable than one thin stacked bar.
   const tierTotal = a.byTier.reduce((x, y) => x + y.costUsd, 0) || 1;
-  const tierSegs = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-seg" style="flex:${x.costUsd.toFixed(4)};background:${modelColor(x.tier)}" title="${x.tier} · ${fmtUsdShort(x.costUsd)} (${Math.round(x.costUsd / tierTotal * 100)}%)"></span>`).join('');
-  const tierLegend = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(x.tier)}"></span>${x.tier} ${fmtUsdShort(x.costUsd)}</span>`).join(' ');
+  const tierRows = a.byTier.filter((x) => x.costUsd > 0).sort((x, y) => y.costUsd - x.costUsd).map((x) => {
+    const pctv = Math.round((x.costUsd / tierTotal) * 100);
+    return `<div class="agg-mrow" title="${x.tier} · ${fmtUsd(x.costUsd)} (${pctv}%)">`
+      + `<span class="agg-mrow-name"><span class="si-lg-dot" style="background:${modelColor(x.tier)}"></span>${esc(x.tier)}</span>`
+      + `<span class="si-bar"><span class="si-bar-stack" style="width:${Math.max(2, Math.round((x.costUsd / (a.byTier[0].costUsd || 1)) * 100))}%;background:${modelColor(x.tier)}"></span></span>`
+      + `<span class="agg-mrow-val mono">${fmtUsdShort(x.costUsd)}</span><span class="agg-mrow-pct mono">${pctv}%</span></div>`;
+  }).join('');
   el.innerHTML = (prog ? `<div class="home-scanline">${prog}</div>` : '')
     + fbBanner
     + chips
-    + `<div class="agg-charts">`
-    + `<div class="agg-chart"><div class="agg-chart-title">Daily spend — last 30 active days</div>${svgDailyChart(a.byDay)}</div>`
+    + `<div class="agg-chart agg-chart-wide"><div class="agg-chart-title">Daily spend — last 30 active days</div>${svgDailyChart(a.byDay)}</div>`
+    + `<div class="agg-charts agg-charts-2col">`
     + `<div class="agg-chart"><div class="agg-chart-title">Spend by repo (top 8)</div>${repoBars || '<p class="muted" style="font-size:11px">—</p>'}</div>`
-    + `<div class="agg-chart"><div class="agg-chart-title">Spend by model tier</div><span class="si-bar agg-tier-bar"><span class="si-bar-stack" style="width:100%">${tierSegs}</span></span><div style="margin-top:4px">${tierLegend}</div></div>`
+    + `<div class="agg-chart"><div class="agg-chart-title">Spend by model</div>${tierRows || '<p class="muted" style="font-size:11px">—</p>'}</div>`
     + `</div>`;
 }
 document.getElementById('home-body')?.addEventListener('click', async (e) => {
