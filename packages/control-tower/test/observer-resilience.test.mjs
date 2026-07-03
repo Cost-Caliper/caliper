@@ -101,7 +101,7 @@ function comparable(p) {
 // MUTATION-PROVED (2026-07-02): src/observer.mjs parse loop
 //   `try { entry = JSON.parse(line) } catch { continue }`
 // → `try { entry = JSON.parse(line) } catch (e) { throw e }`
-// RED: "SyntaxError: Unterminated string in JSON at position 209" thrown from
+// RED: "SyntaxError: Unterminated string in JSON at position 164" thrown from
 // parseAgentTranscript (also reds tests b–e below — same guard). Restored via
 // git checkout → green.
 test('torn tail: a truncated final line parses; totals equal the intact prefix', () => {
@@ -187,8 +187,10 @@ test('entirely-garbage transcript returns the empty shape rather than throwing',
 // BUG (found 2026-07-02, NOT fixed — production code untouched per ground rules):
 // a transcript line containing literal `null` (valid JSON!) crashes
 // parseAgentTranscript with an uncaught "TypeError: Cannot read properties of
-// null (reading 'cwd')" — the `catch { continue }` wraps only JSON.parse, and the
-// very next statement dereferences `entry.cwd`. Any JSON-scalar line whose parse
+// null" (reading 'cwd' when the null line comes first, 'gitBranch' with this
+// fixture — cwd short-circuits once already set) — the `catch { continue }`
+// wraps only JSON.parse, and the next statements dereference `entry`. Any
+// JSON-scalar line whose parse
 // result is null escapes the malformed-line guard entirely, so one such line in a
 // live transcript drops that session from machine totals (the exact failure mode
 // this file exists to prevent). Repro (verified red against current src):
