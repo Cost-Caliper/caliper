@@ -103,6 +103,39 @@ Work is not done until:
 - Test results are reported faithfully — actual counts, actual failures, no
   "should pass".
 
+## Branches and CI — dev → prod
+
+`main` is prod: it is what users clone, and what the self-update route
+(`git pull --ff-only`) and the version check pull. It must always be
+releasable. `dev` is the integration branch. The flow:
+
+1. Feature/fix branches are cut from `dev` and PR back into `dev`.
+   Gate: the **smoke** workflow (< 1 min) — launch-number test files +
+   server boot + `/v1/health`. Fast on purpose; it answers "is this
+   obviously broken?", nothing more.
+2. Promotion is a PR `dev` → `main`.
+   Gate: the **full-ci** workflow — both package suites + the health smoke
+   on Node 20 (oldest supported per `engines`) and 24, Linux and macOS.
+   Branch protection on `main` requires the `full-ci-gate` fan-in check.
+3. Hotfixes may PR straight to `main` in an emergency — they get the same
+   full gate; merge the same change back to `dev` immediately after.
+
+CI conventions (keep it this lean):
+
+- Workflows live in `.github/workflows/` (`smoke.yml`, `ci.yml`). Actions
+  are pinned to full commit SHAs — same supply-chain stance as the
+  exactly-pinned npm dependencies. Bump the SHA and the version comment
+  together.
+- CI runs the same `npm test` a developer runs — no CI-only test paths, no
+  CI-only env besides what GitHub provides. If it is green locally it is
+  green in CI, or the difference is a real bug.
+- The 11 env-gated observer skips are expected in CI; any other skip or
+  failure fails the gate (rule 8).
+- Don't grow the smoke gate. If dev needs more confidence, promote to main
+  more often instead of making every dev push slower.
+- CI is the enforcement of "done means green", not a substitute for running
+  tests locally before pushing.
+
 ## Running tests
 
 ```

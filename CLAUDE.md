@@ -50,6 +50,17 @@ advisory. If this file and `AGENTS.md` disagree, `AGENTS.md` wins.
    are env-gated by design; any OTHER skip or failure is your problem to
    resolve or report.
 
+## Branches — dev → prod
+
+- `main` is PROD (users clone it; self-update pulls it). Never push work
+  straight to `main`: feature branches PR into `dev` (fast smoke gate), and
+  `dev` promotes to `main` via PR (full CI gate: both suites × Node 20/24 ×
+  Linux/macOS, `full-ci-gate` required by branch protection).
+- Hotfix exception: PR straight to `main` gets the same full gate; merge the
+  fix back into `dev` right after.
+- See AGENTS.md "Branches and CI" for the full conventions (SHA-pinned
+  actions, no CI-only test paths, keep the smoke gate small).
+
 ## Commands
 
 ```
