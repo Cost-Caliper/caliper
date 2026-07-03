@@ -157,3 +157,51 @@ test('parseAgentTranscript: fallback events carry the triggering prompt + timest
     assert.ok(refusal.at && sw.at, 'timestamps present for timeline placement')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+// ── REGRESSION: streamed refusal must be counted once, not dropped ────────────
+// The bug (fixed 2026-07-02): refusals were counted only inside the usage-dedup
+// block. A streamed refusal repeats its requestId across rows; when a non-refusal
+// partial (stop_reason:null) precedes the refusal row, the usage-dedup marked the
+// requestId "seen" first, so the refusal row was skipped → undercount (26→22, the
+// launch number showed 100 instead of 104). This fixture reproduces that ordering.
+test('REGRESSION: a streamed refusal (partial row first, same requestId) counts once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ct-streamref-'))
+  try {
+    const path = join(dir, 'agent-astream01.jsonl')
+    writeFileSync(path, [
+      JSON.stringify({ type: 'user', timestamp: '2026-06-12T20:40:00.000Z', message: { content: 'do a thing' } }),
+      // Partial streamed row FIRST — same requestId, NOT a refusal. Pre-fix this
+      // marked req_stream "seen" and consumed the usage-dedup slot.
+      entry({ ts: '2026-06-12T20:41:00.000Z', req: 'req_stream', model: 'claude-fable-5', stop: null,
+        content: [{ type: 'thinking', thinking: 'working' }],
+        usage: { ...U0, input_tokens: 500, output_tokens: 40 } }),
+      // The refusal row SECOND — same requestId. Pre-fix: countUsage=false → dropped.
+      entry({ ts: '2026-06-12T20:41:02.000Z', req: 'req_stream', model: 'claude-fable-5', stop: 'refusal',
+        stopDetails: { type: 'refusal', category: 'cyber', explanation: null },
+        content: [{ type: 'thinking', thinking: 'declining' }],
+        usage: { ...U0, input_tokens: 500, output_tokens: 120 } }),
+    ].join('\n') + '\n')
+    const p = parseAgentTranscript(path)
+    assert.ok(p.fallbacks, 'fallbacks present')
+    assert.equal(p.fallbacks.refusals, 1, 'streamed refusal counted exactly once (was 0 pre-fix)')
+    assert.equal(p.fallbacks.categories.cyber, 1, 'category captured from the refusal row')
+    // And it must NOT double-count if the refusal row itself repeats (multi-chunk stream).
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('REGRESSION: a refusal repeated across multiple streamed rows still counts once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ct-streamref2-'))
+  try {
+    const path = join(dir, 'agent-astream02.jsonl')
+    const refRow = (ts) => entry({ ts, req: 'req_r', model: 'claude-fable-5', stop: 'refusal',
+      stopDetails: { type: 'refusal', category: null, explanation: null },
+      content: [{ type: 'thinking', thinking: 'x' }], usage: { ...U0, input_tokens: 300, output_tokens: 90 } })
+    writeFileSync(path, [
+      JSON.stringify({ type: 'user', timestamp: '2026-06-12T20:40:00.000Z', message: { content: 'hi' } }),
+      refRow('2026-06-12T20:41:00.000Z'),
+      refRow('2026-06-12T20:41:00.500Z'), // duplicate streamed chunk, same requestId
+    ].join('\n') + '\n')
+    const p = parseAgentTranscript(path)
+    assert.equal(p.fallbacks.refusals, 1, 'duplicate streamed refusal rows dedup to one')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
