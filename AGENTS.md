@@ -65,14 +65,32 @@ collector). If you find yourself mocking the module you are testing, stop.
   output (test locale-dependent helpers on their deterministic branches or with
   shape regexes).
 
-### 6. Launch-number honesty
+### 6. No secrets in code, no secrets in git
+
+Never hardcode a real credential — API key, token, password, webhook secret —
+anywhere in the repo: not in tests, not in fixtures, not in source, not in
+docs or commit messages. This repo is public. The rules that follow from this:
+
+- Tests are keyless by design (rule 5). A test that exercises credential
+  plumbing (e.g. `requireKey`) uses obviously-fake synthetic values like
+  `'sk-ant-abc'`, passed as an explicit env object — never a value that works
+  anywhere.
+- Anything that genuinely needs a real credential at runtime reads it from an
+  environment variable and fails closed (412 / visible skip) when absent.
+- Real values live only in git-ignored `.env` files (`.env` / `.env.*` are
+  ignored at the repo root) or the shell environment — never committed. Before
+  committing, check the diff for anything that looks like a live key.
+- Never echo a real credential into logs, fixtures, assertion messages, or
+  test output.
+
+### 7. Launch-number honesty
 
 If a test reveals a real production bug, STOP: report it with evidence. Do not
 silently "fix" production code to make a test pass, and never soften a test to
 make broken code pass. Headline numbers are launch-critical; a plausible-but-
 wrong number is the worst outcome this repo can produce.
 
-### 7. Definition of done
+### 8. Definition of done
 
 Work is not done until:
 

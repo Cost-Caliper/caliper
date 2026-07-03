@@ -34,10 +34,18 @@ advisory. If this file and `AGENTS.md` disagree, `AGENTS.md` wins.
    Tests touching `src/sessions.mjs` (even transitively, e.g. spawning the
    server) must sandbox HOME — `import './_env.mjs'` FIRST — or they will
    write into the user's real `~/.cache/workflow-lens/`.
-6. **Launch-number honesty.** A test that exposes a production bug means STOP
+6. **No secrets in code — ever.** Never hardcode a real credential (API key,
+   token, password) in tests, fixtures, source, or docs — this repo is public.
+   Tests are keyless by design; a test that exercises credential plumbing uses
+   obviously-fake synthetic values (e.g. `'sk-ant-abc'`) passed as explicit
+   env objects, never anything real. Real credentials live only in environment
+   variables loaded from git-ignored `.env` files (`.env` / `.env.*` are
+   ignored at the repo root) — never committed, never echoed into logs,
+   fixtures, or assertion messages.
+7. **Launch-number honesty.** A test that exposes a production bug means STOP
    and report with evidence. Never adjust production numbers or soften a test
    to get to green. Report real test output — actual counts, actual failures.
-7. **Done means green.** `npm test` in BOTH packages before claiming any task
+8. **Done means green.** `npm test` in BOTH packages before claiming any task
    complete. The 11 observer tests that skip without `WFLENS_TEST_SESSION_DIR`
    are env-gated by design; any OTHER skip or failure is your problem to
    resolve or report.
