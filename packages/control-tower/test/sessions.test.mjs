@@ -2,6 +2,7 @@
 // sessions (including "regular" ones with no workflows/subagents dir) and produce
 // per-session stats. Keyless; synthetic fixtures (portable, no real session).
 
+import './_env.mjs' // FIRST: sandbox HOME so the summary disk cache never touches ~/.cache
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
