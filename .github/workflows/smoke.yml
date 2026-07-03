@@ -1,0 +1,51 @@
+# Smoke gate for the dev integration branch — fast by design (< 1 minute).
+#
+# dev answers one question: "is this obviously broken?" — the server boots,
+# /v1/health answers, and the launch-number test files pass. The full matrix
+# (both suites, Node 20+24, Linux+macOS) runs only when dev is promoted to
+# main (prod) — see ci.yml.
+name: smoke
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Actions pinned to full commit SHAs (same supply-chain stance as the
+      # exactly-pinned npm dependencies).
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Launch-number tests (the headline stat must never regress)
+        working-directory: packages/control-tower
+        run: node --test test/fallbacks.test.mjs test/sessions-fallbacks.test.mjs test/fallback-invariants.test.mjs
+
+      - name: Server boots and answers /v1/health
+        working-directory: packages/control-tower
+        run: |
+          PORT=48787 node server.mjs &
+          SERVER_PID=$!
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:48787/v1/health > /dev/null 2>&1; then
+              echo "health OK"
+              kill "$SERVER_PID"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "server never answered /v1/health" >&2
+          kill "$SERVER_PID" || true
+          exit 1
