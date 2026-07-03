@@ -36,10 +36,12 @@
 |---|---|
 | ![Folder view](docs/screenshots/folder.png) | ![Session overview](docs/screenshots/session.png) |
 
-- **Machine-wide analytics** — all-time spend, daily charts stacked by model, spend by repo, cache economics.
-- **Everything** — plain chats, Workflow runs, subagents (nested too), full conversations, per-step timelines.
-- **The loop** — one click copies your real numbers, file paths, and live API pointers into a prompt; Claude analyzes the spend, edits the workflow that caused it, or writes you a cost skill.
-- **Self-updating** — checks this repo and offers one-click updates.
+- **Machine-wide analytics** — all-time spend, daily charts stacked by model, every folder ranked (with filter + sorts), cache economics.
+- **Session forensics** — waterfall of the main chat + every subagent on the real time axis, subagents ranked by cost, and per-run workflow timelines split into inference vs tool time.
+- **"Nerfed" tracking** — red markers wherever Fable refused or the harness switched models, plus one-click prompts to analyze the reasons or disable auto-fallback.
+- **The loop** — scope-aware **⧉ Optimize spend** buttons (machine / folder / session) copy your real numbers and live API pointers into a prompt; Claude analyzes the spend or writes you a cost skill.
+- **Guided tour & dark mode** — ✦ Tour explains every panel on your own data; ☾ toggles a full dark theme.
+- **Self-updating** — checks this repo and offers one-click updates. (Previous UI: `/legacy/` for one release.)
 
 *Screenshots are bundled demo data (`node scripts/demo-data.mjs`). Your dashboard shows your own transcripts, locally.*
 

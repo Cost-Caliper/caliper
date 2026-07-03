@@ -21,13 +21,21 @@ function usageLine(ts, model, req, { inTok, out, cw, cr }) {
 const userLine = (ts, text) => JSON.stringify({ type: 'user', timestamp: ts, message: { role: 'user', content: text } })
 
 let CUR = null
-function session(projDir, { title, tier, daysAgo, mins, turns, scale, subs = [], live = false }) {
+function session(projDir, { title, tier, daysAgo, mins, turns, scale, subs = [], live = false, nerf = false }) {
   const id = uuid()
   const start = Date.now() - daysAgo * 86400000 - Math.floor(rnd() * 6) * 3600000
   const lines = [userLine(new Date(start).toISOString(), title)]
   for (let t = 0; t < turns; t++) {
     const ts = new Date(start + ((t + 1) / turns) * mins * 60000).toISOString()
-    lines.push(usageLine(ts, MODELS[tier], 'req_' + t, {
+    // a "nerfed" session: mid-way, the harness emits a fallback block and switches
+    // off fable to opus for a few turns (mirrors the real transcript shape)
+    const half = Math.floor(turns / 2)
+    if (nerf && t === half) {
+      lines.push(JSON.stringify({ type: 'assistant', requestId: 'req_' + t, timestamp: ts, cwd: CUR.cwd, gitBranch: 'main',
+        message: { role: 'assistant', model: MODELS.opus, content: [{ type: 'fallback', from: { model: MODELS.fable }, to: { model: MODELS.opus } }] } }))
+    }
+    const model = nerf && t >= half && t < half + 3 ? MODELS.opus : MODELS[tier]
+    lines.push(usageLine(ts, model, 'req_' + t, {
       inTok: Math.floor((800 + rnd() * 3000) * scale), out: Math.floor((300 + rnd() * 1500) * scale),
       cw: Math.floor((4000 + rnd() * 30000) * scale), cr: Math.floor((30000 + rnd() * 250000) * scale),
     }))
@@ -38,12 +46,21 @@ function session(projDir, { title, tier, daysAgo, mins, turns, scale, subs = [],
     const sd = join(projDir, id)
     {
       mkdirSync(join(sd, 'subagents'), { recursive: true })
-      for (const desc of subs) {
+      subs.forEach((desc, si) => {
         const aid = hex()
+        const subTier = si % 2 ? 'haiku' : 'sonnet'
         writeFileSync(join(sd, 'subagents', `agent-${aid}.meta.json`), JSON.stringify({ agentType: 'Explore', description: desc, toolUseId: 'tu_' + aid.slice(0, 6) }))
-        const s0 = start + 60000
-        writeFileSync(join(sd, 'subagents', `agent-${aid}.jsonl`), [userLine(new Date(s0).toISOString(), desc), usageLine(new Date(s0 + 90000).toISOString(), MODELS.haiku, 'req_s', { inTok: 900, out: 2200, cw: 9000, cr: 140000 })].join('\n'))
-      }
+        // stagger starts and give each sub a few turns over 3-9 minutes so
+        // waterfalls/durations render like real usage
+        const s0 = start + 60000 + si * 150000
+        const durMs = (3 + Math.floor(rnd() * 6)) * 60000
+        const subLines = [userLine(new Date(s0).toISOString(), desc)]
+        for (let k = 1; k <= 3; k++) {
+          subLines.push(usageLine(new Date(s0 + (k / 3) * durMs).toISOString(), MODELS[subTier], 'req_s' + k,
+            { inTok: 600 + Math.floor(rnd() * 900), out: 900 + Math.floor(rnd() * 1800), cw: 6000 + Math.floor(rnd() * 8000), cr: 90000 + Math.floor(rnd() * 120000) }))
+        }
+        writeFileSync(join(sd, 'subagents', `agent-${aid}.jsonl`), subLines.join('\n'))
+      })
     }
   }
   const m = live ? Date.now() / 1000 : (start + mins * 60000) / 1000
@@ -55,7 +72,7 @@ const projects = [
   ['-Users-demo-dev-shopfront', '/Users/demo/dev/shopfront', [
     { title: 'Add rate limiting to the checkout API and write tests', tier: 'opus', daysAgo: 0, mins: 42, turns: 30, scale: 4, subs: ['Explore the payments module', 'Audit error handling in checkout'], live: true },
     { title: 'why is the cart total wrong when a coupon is stacked?', tier: 'sonnet', daysAgo: 1, mins: 18, turns: 12, scale: 1.5 },
-    { title: 'Refactor ProductCard to server components', tier: 'fable', daysAgo: 2, mins: 55, turns: 26, scale: 3, subs: ['Map all ProductCard usages'] },
+    { title: 'Refactor ProductCard to server components', tier: 'fable', daysAgo: 2, mins: 55, turns: 26, scale: 3, subs: ['Map all ProductCard usages'], nerf: true },
     { title: 'Write release notes for v2.3', tier: 'haiku', daysAgo: 2, mins: 6, turns: 5, scale: 0.6 },
     { title: 'Migrate the orders table to the new schema', tier: 'opus', daysAgo: 4, mins: 70, turns: 40, scale: 5, subs: ['Verify the migration on a copy'] },
     { title: 'Fix flaky checkout e2e test', tier: 'sonnet', daysAgo: 5, mins: 25, turns: 15, scale: 1.2 },
