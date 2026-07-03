@@ -38,10 +38,10 @@
 
 - **Machine-wide analytics** — all-time spend, daily charts stacked by model, every folder ranked (with filter + sorts), cache economics.
 - **Session forensics** — waterfall of the main chat + every subagent on the real time axis, subagents ranked by cost, and per-run workflow timelines split into inference vs tool time.
-- **"Nerfed" tracking** — red markers wherever Fable refused or the harness switched models, plus one-click prompts to analyze the reasons or disable auto-fallback.
+- **"Nerfed by Fable" tracking** — counts every time Fable 5's safety classifier declined a request or Claude Code re-served it on the fallback model, split main chat vs subagents, with red markers on the daily chart and one-click prompts to analyze the reasons or disable auto-fallback. (Per-step prompt drill-down: `/legacy/` for now.)
 - **The loop** — scope-aware **⧉ Optimize spend** buttons (machine / folder / session) copy your real numbers and live API pointers into a prompt; Claude analyzes the spend or writes you a cost skill.
 - **Guided tour & dark mode** — ✦ Tour explains every panel on your own data; ☾ toggles a full dark theme.
-- **Self-updating** — checks this repo and offers one-click updates. (Previous UI: `/legacy/` for one release.)
+- **Self-updating** — checks this repo and offers one-click updates. (Previous UI preserved at `/legacy/` for one release.)
 
 *Screenshots are bundled demo data (`node scripts/demo-data.mjs`). Your dashboard shows your own transcripts, locally.*
 

@@ -45,6 +45,6 @@ Work through this checklist in order — every step, every release.
 
 - Bump `version` in `.claude-plugin/plugin.json` (semver: UI/feature releases bump minor).
 - One release commit titled like the changelog entry, ending with the version:
-  `New caliper.run design system UI (v0.27.0)`.
+  `New caliper.run design system UI (v0.28.0)`.
 - PR to `main`, merge when green. Users get the update pill on their next dashboard load;
   `self-update` runs `git pull --ff-only` against `main`.

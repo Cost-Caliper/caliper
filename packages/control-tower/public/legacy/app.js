@@ -37,7 +37,9 @@ const fmtNshort = (n) => {
 };
 const fmtUsdShort = (n) => {
   const v = Number(n || 0);
-  if (v >= 100) return '$' + Math.round(v);
+  // Thousands separators so real values read as real (e.g. $16,965, not $16965)
+  // and whole-dollar rounding above $100 doesn't look artificially clean.
+  if (v >= 100) return '$' + Math.round(v).toLocaleString('en-US');
   if (v >= 1) return '$' + v.toFixed(2);
   return '$' + v.toFixed(3);
 };
@@ -3586,9 +3588,14 @@ function renderAggregate(a) {
   const t = a.totals;
   const prog = a.done ? '' : `<span class="muted" style="font-size:11px;margin-left:10px">scanning… ${fmtN(a.progress.scannedSessions)}/${fmtN(a.progress.totalSessions)} sessions</span>`;
   // Metric cards — equal-width grid, generous whitespace (StackAI/OpenAI usage style).
-  const metric = (k, v, s, big) => `<div class="agg-metric${big ? ' agg-metric-hero' : ''}"><div class="agg-metric-k">${k}</div><div class="agg-metric-v">${v}</div><div class="agg-metric-s">${s}</div></div>`;
+  const metric = (k, v, s, big, title) => `<div class="agg-metric${big ? ' agg-metric-hero' : ''}"${title ? ` title="${esc(title)}"` : ''}><div class="agg-metric-k">${k}</div><div class="agg-metric-v">${v}</div><div class="agg-metric-s">${s}</div></div>`;
+  // Honest coverage window: "all-time" is really "as far back as your on-disk
+  // transcripts go" — Claude Code prunes old ones. Show the real earliest date.
+  const spanDays = (a.byDay || []).map((b) => b.day).filter(Boolean).sort();
+  const fmtDayShort = (iso) => { const p = String(iso).split('-'); const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][(+p[1] || 1) - 1]; return p.length === 3 ? `${M} ${+p[2]}, ${p[0]}` : iso; };
+  const sinceLabel = spanDays.length ? `since ${fmtDayShort(spanDays[0])} · est.` : 'cache-aware estimate';
   const chips = `<div class="agg-metrics">`
-    + metric(`All-time spend${a.done ? '' : ' (so far)'}`, fmtUsdShort(t.costUsd), 'cache-aware estimate', true)
+    + metric(`Total spend${a.done ? '' : ' (so far)'}`, fmtUsdShort(t.costUsd), sinceLabel, true, `Cache-aware estimate across every Claude Code transcript still on disk (${spanDays.length ? fmtDayShort(spanDays[0]) + ' – ' + fmtDayShort(spanDays[spanDays.length - 1]) : 'all dates'}, ${spanDays.length} active days). Claude Code prunes older transcripts, so this is bounded by what's retained locally, not literally all-time.`)
     + metric('Sessions', fmtN(t.sessions), `${fmtN(t.folders)} folders`)
     + metric('Output tokens', fmtNshort(t.tokens.out), `${fmtNshort(t.tokens.in)} fresh in`)
     + metric('Cache reads', fmtNshort(t.tokens.cacheRd), `${fmtNshort(t.tokens.cacheWr)} written`)
@@ -3610,7 +3617,7 @@ function renderAggregate(a) {
     .sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ×${v}`).join(' · ');
   const fbBanner = totalSwitches
     ? `<div class="fb-banner${a.done ? '' : ' fb-banner-scanning'}">`
-      + `<div class="fb-banner-lead">⇄ You got <strong>switched off Fable ${fmtN(totalSwitches)} time${totalSwitches === 1 ? '' : 's'}</strong>${a.done ? '' : ' <span class="fb-banner-sofar">(scanning…)</span>'}</div>`
+      + `<div class="fb-banner-lead">⇄ You got <strong>nerfed by Fable ${fmtN(totalSwitches)} time${totalSwitches === 1 ? '' : 's'}</strong>${a.done ? '' : ' <span class="fb-banner-sofar">(scanning…)</span>'}</div>`
       + `<div class="fb-banner-sub">`
       + `<span class="fb-banner-pill" title="Fable's classifier declined a request inside a subagent (a Task/Agent, or a Workflow agent() call), then Claude Code re-served it on the fallback model. Includes refusals + re-served switches.">`
       + `<strong>${fmtN(subTotal)}</strong> in subagents</span>`

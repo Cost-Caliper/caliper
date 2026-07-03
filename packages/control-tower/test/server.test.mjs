@@ -120,13 +120,13 @@ after(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-test('GET /v1/health — returns expected shape', async () => {
+test('GET /v1/health — returns expected shape', async (t) => {
   let res
   try {
     res = await get('/v1/health')
   } catch {
-    // Server not running in this test context — skip gracefully
-    console.log('[test] server not available — skipping')
+    // Server not running in this test context — report as skipped, not green
+    t.skip('server not reachable')
     return
   }
   assert.equal(res.status, 200, 'status 200')
@@ -140,9 +140,9 @@ test('GET /v1/health — returns expected shape', async () => {
   assert.ok(typeof res.body.cassetteCount === 'number', 'cassetteCount is a number')
 })
 
-test('GET /v1/workflows — returns array with known fields', async () => {
+test('GET /v1/workflows — returns array with known fields', async (t) => {
   let res
-  try { res = await get('/v1/workflows') } catch { return }
+  try { res = await get('/v1/workflows') } catch { t.skip('server not reachable'); return }
   assert.equal(res.status, 200)
   assert.ok(Array.isArray(res.body), 'body is array')
   for (const w of res.body) {
@@ -154,10 +154,10 @@ test('GET /v1/workflows — returns array with known fields', async () => {
   }
 })
 
-test('GET /v1/workflows/:id — returns graphSvg + estimate', async () => {
+test('GET /v1/workflows/:id — returns graphSvg + estimate', async (t) => {
   let listRes
-  try { listRes = await get('/v1/workflows') } catch { return }
-  if (!listRes.body?.length) return
+  try { listRes = await get('/v1/workflows') } catch { t.skip('server not reachable'); return }
+  if (!listRes.body?.length) { t.skip('no workflows loaded on this server'); return }
   const id = listRes.body[0].id
   const res = await get(`/v1/workflows/${encodeURIComponent(id)}`)
   assert.equal(res.status, 200)
@@ -168,16 +168,16 @@ test('GET /v1/workflows/:id — returns graphSvg + estimate', async () => {
   assert.ok(res.body.lint, 'lint field present')
 })
 
-test('GET /v1/workflows/:id — 404 for unknown id', async () => {
+test('GET /v1/workflows/:id — 404 for unknown id', async (t) => {
   let res
-  try { res = await get('/v1/workflows/nonexistent-workflow-xyz') } catch { return }
+  try { res = await get('/v1/workflows/nonexistent-workflow-xyz') } catch { t.skip('server not reachable'); return }
   assert.equal(res.status, 404)
   assert.ok(res.body.error, 'error field present')
 })
 
-test('GET /v1/cassettes — returns array', async () => {
+test('GET /v1/cassettes — returns array', async (t) => {
   let res
-  try { res = await get('/v1/cassettes') } catch { return }
+  try { res = await get('/v1/cassettes') } catch { t.skip('server not reachable'); return }
   assert.equal(res.status, 200)
   assert.ok(Array.isArray(res.body), 'body is array')
   // We expect at least the hello cassette recorded in the build step
@@ -187,15 +187,15 @@ test('GET /v1/cassettes — returns array', async () => {
   }
 })
 
-test('POST /v1/runs — fail-closed: no key + live mode -> 412', async () => {
+test('POST /v1/runs — fail-closed: no key + live mode -> 412', async (t) => {
   let healthRes
-  try { healthRes = await get('/v1/health') } catch { return }
+  try { healthRes = await get('/v1/health') } catch { t.skip('server not reachable'); return }
 
   // Only run this test when no Anthropic key is present (CI environment)
   if (healthRes.body?.providers?.anthropic) {
     // Key is present — test that POST /v1/runs works (returns a runId, not 412)
     const listRes = await get('/v1/workflows')
-    if (!listRes.body?.length) return
+    if (!listRes.body?.length) { t.skip('no workflows loaded on this server'); return }
     const id = listRes.body[0].id
     const res = await post('/v1/runs', { workflowId: id, mode: 'live' })
     // With a key, it should either start (201) or fail with a different error — not 412
@@ -205,26 +205,26 @@ test('POST /v1/runs — fail-closed: no key + live mode -> 412', async () => {
 
   // No key — verify fail-closed
   const listRes = await get('/v1/workflows')
-  if (!listRes.body?.length) return
+  if (!listRes.body?.length) { t.skip('no workflows loaded on this server'); return }
   const id = listRes.body[0].id
   const res = await post('/v1/runs', { workflowId: id, mode: 'live' })
   assert.equal(res.status, 412, '412 when no key and live mode')
   assert.ok(res.body?.error?.code === 'MISSING_CREDENTIAL', 'MISSING_CREDENTIAL error code')
 })
 
-test('POST /v1/runs — replay with hello cassette streams done', { timeout: 20000 }, async () => {
+test('POST /v1/runs — replay with hello cassette streams done', { timeout: 20000 }, async (t) => {
   let cassettesRes
-  try { cassettesRes = await get('/v1/cassettes') } catch { return }
+  try { cassettesRes = await get('/v1/cassettes') } catch { t.skip('server not reachable'); return }
   if (!cassettesRes.body?.length) {
-    console.log('[test] no cassettes available — skipping replay test')
+    t.skip('no cassettes available')
     return
   }
   const cassette = cassettesRes.body.find(c => c.id === 'hello') || cassettesRes.body[0]
-  if (!cassette) return
+  if (!cassette) { t.skip('no cassette resolved'); return }
 
   // Find the matching workflow
   const listRes = await get('/v1/workflows')
-  if (!listRes.body?.length) return
+  if (!listRes.body?.length) { t.skip('no workflows loaded on this server'); return }
   const workflowId = cassette.id === 'hello' ? 'hello' : listRes.body[0].id
 
   const runRes = await post('/v1/runs', {

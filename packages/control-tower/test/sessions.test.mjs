@@ -2,6 +2,7 @@
 // sessions (including "regular" ones with no workflows/subagents dir) and produce
 // per-session stats. Keyless; synthetic fixtures (portable, no real session).
 
+import './_env.mjs' // FIRST: sandbox HOME so the summary disk cache never touches ~/.cache
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
@@ -141,6 +142,11 @@ test('buildHomeData: cross-folder recents + bounded folder spend rollups', () =>
     const projB = join(root, '-Users-x-develop-beta')
     mkdirSync(projB, { recursive: true })
     writeFileSync(join(projB, `${PLAIN_ID}.jsonl`), [uLine('2026-06-02T00:00:00.000Z', 'beta work'), aLine('2026-06-02T00:00:03.000Z')].join('\n'))
+    // Pin mtimes explicitly — back-to-back writes can land in the same mtime
+    // tick on ext4 (Linux CI), making the newest-first sort order arbitrary.
+    const now = Date.now() / 1000
+    utimesSync(join(projB, `${PLAIN_ID}.jsonl`), now, now)
+    utimesSync(join(projA, `${RICH_ID}.jsonl`), now - 1000, now - 1000)
 
     const home = buildHomeData(root, { folders: 5, perFolder: 8, recents: 10 })
     assert.ok(home.projects.length >= 2)                       // full picker list

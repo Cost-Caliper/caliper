@@ -4,7 +4,7 @@ All notable changes to Caliper. Versions map to `.claude-plugin/plugin.json`; th
 in-app update pill compares against this repo. (Entries before 0.27.0 are
 backfilled from commit history.)
 
-## 0.27.0 — 2026-07-03
+## 0.28.0 — 2026-07-03
 
 The redesign release: the dashboard is now the caliper.run design system, end to end.
 
@@ -44,6 +44,16 @@ The redesign release: the dashboard is now the caliper.run design system, end to
   durations so waterfalls render in demos and screenshots.
 - New test: `test/tour-sync.test.mjs` (tour ↔ UI surface consistency).
 - `docs/DEPLOYING.md`: the release checklist.
+
+## 0.27.0 — 2026-07-03
+
+- "Nerfed by Fable" rebrand in the previous UI, honest date range, refreshed README screenshots.
+- Demo data can synthesize Fable refusals and fallback switches (main chat + workflow agents).
+- CI: dev→prod gating (smoke on dev, full matrix as the prod gate on main).
+
+## 0.26.2 — 2026-07-03
+
+- Fix refusal undercount (100 was a bug; real = 104) + honest formatting.
 
 ## 0.26.1 — 2026-07-02
 
