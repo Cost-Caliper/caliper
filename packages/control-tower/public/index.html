@@ -30,6 +30,9 @@
       <button class="seg-btn" id="btn-mode-replay" aria-pressed="false" type="button">Replay Cassette</button>
     </div>
 
+    <!-- Next Caliper tool teaser (always visible in the header) -->
+    <span class="router-teaser" title="Auto-Router — smart routing of your agents' work to cheaper open models, right inside the harness. The next Caliper tool (caliper.run).">Auto-Router<span class="soon">coming soon</span></span>
+
     <!-- Theme toggle -->
     <button class="theme-toggle" id="btn-theme" type="button" aria-label="Toggle light/dark theme" title="Toggle theme">
       <span id="theme-icon" aria-hidden="true">☀</span>
@@ -127,8 +130,9 @@
       <div class="section-header">
         <h2 class="section-title" id="home-heading">
           All activity
+          <button class="btn btn-secondary btn-sm home-refresh-inline" type="button" id="home-refresh" aria-label="Refresh dashboard">Refresh</button>
         </h2>
-        <button class="btn btn-secondary btn-sm" type="button" id="home-refresh" aria-label="Refresh dashboard">Refresh</button>
+        <button class="btn-optimize" type="button" data-view-optimize="machine" title="Have Claude read your spend and write you a personalized cost-discipline skill">Optimize my spend →</button>
       </div>
       <div id="home-body"><p class="muted" style="padding:12px;font-size:12px">Loading…</p></div>
       <p class="observed-caveat label-13 muted" style="margin-top:12px">Spend figures cover each folder's most recent sessions (shown per folder), reconstructed from transcripts — cache-aware estimates, not billed amounts. Click a folder for its full session list; click a session to open it.</p>

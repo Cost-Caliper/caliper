@@ -23,7 +23,7 @@ const summaryCache = new Map() // absolute jsonl path -> { mtimeMs, size, summar
 // CACHE_VERSION whenever the cost model or summary shape changes (v3 = per-model
 // cost attribution + refusal-fallback counts; v2 = TTL-bucketed
 // cache pricing + requestId dedup of 2026-07-01).
-const CACHE_VERSION = 3
+const CACHE_VERSION = 5
 const CACHE_FILE = join(homedir() || tmpdir(), '.cache', 'workflow-lens', `session-summaries-v${CACHE_VERSION}.json`)
 let diskCacheLoaded = false
 let unsavedSummaries = 0
@@ -66,6 +66,57 @@ function countDir(dir, re) {
   try { return readdirSync(dir).filter((f) => re.test(f)).length } catch { return 0 }
 }
 
+// Scan a session's SUBAGENT transcripts for refusal-fallback signatures. This is the
+// bulk of real switching: Fable's classifier declines a request inside a Task/Agent
+// subagent, and Claude Code re-serves it on the fallback model. The machine scan only
+// parses the MAIN transcript, so without this the Home counts miss ~95% of switches
+// (measured: 71 subagent transcripts vs 3 main). Cheap: a substring pre-check gates the
+// light parse, and completed sessions are immutable so the disk cache memoizes it.
+const FB_SIG_RE = /"stop_reason":"refusal"|"type":"fallback"|fallback_message/
+// Every agent-*.jsonl under a session's subagents/ tree — BOTH direct Task/Agent
+// subagents (subagents/agent-*.jsonl) AND the workflow agent() fan-out
+// (subagents/workflows/wf_*/agent-*.jsonl). The fan-out is where the bulk lives:
+// parallel Fable agents in a Workflow all hit the classifier at once (measured 67
+// of 71 fallback transcripts were workflow agents, 4 direct).
+function collectSubagentTranscripts(sessDir) {
+  const out = []
+  const dir = join(sessDir, 'subagents')
+  try {
+    for (const f of readdirSync(dir)) if (/^agent-[0-9a-f]+\.jsonl$/.test(f)) out.push(join(dir, f))
+  } catch { /* none */ }
+  const wfDir = join(dir, 'workflows')
+  try {
+    for (const wf of readdirSync(wfDir)) {
+      if (!/^wf_/.test(wf)) continue
+      const d = join(wfDir, wf)
+      try { for (const f of readdirSync(d)) if (/^agent-[0-9a-f]+\.jsonl$/.test(f)) out.push(join(d, f)) } catch { /* skip */ }
+    }
+  } catch { /* no workflow subagents */ }
+  return out
+}
+function scanSubagentFallbacks(sessDir) {
+  const files = collectSubagentTranscripts(sessDir)
+  if (!files.length) return null
+  const acc = { switches: 0, refusals: 0, sticky: 0, agents: 0, wfAgents: 0, categories: {}, from: null, to: null }
+  for (const p of files) {
+    let raw
+    try { raw = readFileSync(p, 'utf8') } catch { continue }
+    if (!FB_SIG_RE.test(raw)) continue
+    const parsed = parseAgentTranscript(p, { light: true })
+    const fb = parsed && parsed.fallbacks
+    if (!fb || !(fb.switches || fb.refusals || fb.stickyTurns)) continue
+    acc.agents++
+    if (p.includes('/subagents/workflows/')) acc.wfAgents++
+    acc.switches += fb.switches || 0
+    acc.refusals += fb.refusals || 0
+    acc.sticky += fb.stickyTurns || 0
+    if (fb.from && !acc.from) acc.from = fb.from
+    if (fb.to) acc.to = fb.to
+    for (const [k, v] of Object.entries(fb.categories || {})) acc.categories[k] = (acc.categories[k] || 0) + v
+  }
+  return (acc.switches || acc.refusals || acc.sticky) ? acc : null
+}
+
 // Summarize ONE session by id. Returns the cached summary object when the transcript
 // is unchanged (callers may rely on identity for cheap change detection). Returns
 // null for invalid ids (path-traversal guard) or missing transcripts.
@@ -100,7 +151,23 @@ export function summarizeSessionFile(projectDir, id) {
     costUsd: +costOfParse(parsed).toFixed(6),
     model: parsed.model || null,
     tier: tierFromModel(dominantModel(parsed)),
-    ...(parsed.fallbacks ? { fallbacks: { switches: parsed.fallbacks.switches, sticky: parsed.fallbacks.stickyTurns, refusals: parsed.fallbacks.refusals } } : {}),
+    ...(() => {
+      // Main-conversation fallbacks + a scan of every subagent transcript. Reported
+      // split by WHERE it happened — the subagent layer is where the bulk lives.
+      const mf = parsed.fallbacks
+      const main = mf ? { switches: mf.switches || 0, refusals: mf.refusals || 0, sticky: mf.stickyTurns || 0 } : { switches: 0, refusals: 0, sticky: 0 }
+      const sub = hasDir ? scanSubagentFallbacks(sessDir) : null
+      const subN = sub || { switches: 0, refusals: 0, sticky: 0, agents: 0, categories: {}, from: null, to: null }
+      const total = { switches: main.switches + subN.switches, refusals: main.refusals + subN.refusals, sticky: main.sticky + subN.sticky }
+      if (!(total.switches || total.refusals || total.sticky)) return {}
+      const categories = { ...(mf ? mf.categories : {}) }
+      for (const [k, v] of Object.entries(subN.categories || {})) categories[k] = (categories[k] || 0) + v
+      return { fallbacks: {
+        switches: total.switches, refusals: total.refusals, sticky: total.sticky,
+        main, sub: { switches: subN.switches, refusals: subN.refusals, sticky: subN.sticky, agents: subN.agents, wfAgents: subN.wfAgents || 0 },
+        categories, from: (mf && mf.from) || subN.from || 'claude-fable-5', to: (mf && mf.to) || subN.to || 'claude-opus-4-8',
+      } }
+    })(),
     cwd: parsed.cwd || null,
     gitBranch: parsed.gitBranch || null,
     workflows: hasDir ? countDir(join(sessDir, 'workflows'), /^wf_.*\.json$/) : 0,
@@ -151,7 +218,7 @@ export function aggregateMachine(projectsRoot, { budgetMs = 1500 } = {}) {
     }
     aggState = {
       root: projectsRoot, queue, idx: 0,
-      totals: { sessions: 0, costUsd: 0, tokens: { in: 0, out: 0, cacheRd: 0, cacheWr: 0 }, folders: new Set(), fallbacks: { switches: 0, sticky: 0, refusals: 0 } },
+      totals: { sessions: 0, costUsd: 0, tokens: { in: 0, out: 0, cacheRd: 0, cacheWr: 0 }, folders: new Set(), fallbacks: { switches: 0, sticky: 0, refusals: 0, mainSwitches: 0, subSwitches: 0, mainTotal: 0, subTotal: 0, wfAgents: 0, sessionsAffected: 0, categories: {} } },
       byDay: new Map(), byRepo: new Map(), byTier: new Map(),
     }
   }
@@ -168,23 +235,34 @@ export function aggregateMachine(projectsRoot, { budgetMs = 1500 } = {}) {
     s.totals.tokens.cacheRd += sum.tokens?.cacheRd || 0
     s.totals.tokens.cacheWr += sum.tokens?.cacheWr || 0
     if (sum.fallbacks) {
-      s.totals.fallbacks.switches += sum.fallbacks.switches || 0
-      s.totals.fallbacks.sticky += sum.fallbacks.sticky || 0
-      s.totals.fallbacks.refusals += sum.fallbacks.refusals || 0
+      const F = s.totals.fallbacks
+      F.switches += sum.fallbacks.switches || 0
+      F.sticky += sum.fallbacks.sticky || 0
+      F.refusals += sum.fallbacks.refusals || 0
+      const sm = sum.fallbacks.main || {}, ss = sum.fallbacks.sub || {}
+      F.mainSwitches += sm.switches || 0
+      F.subSwitches += ss.switches || 0
+      F.mainTotal += (sm.switches || 0) + (sm.refusals || 0)  // switches + refusals in the main chat
+      F.subTotal += (ss.switches || 0) + (ss.refusals || 0)   // ... and inside subagents
+      F.wfAgents += ss.wfAgents || 0
+      F.sessionsAffected++
+      for (const [k, v] of Object.entries(sum.fallbacks.categories || {})) F.categories[k] = (F.categories[k] || 0) + v
     }
     s.totals.folders.add(item.dir)
     const tier = sum.tier || 'other'
+    // Per-bucket fallback count (switches + refusals) so daily & repo bars can flag them.
+    const fbN = sum.fallbacks ? (sum.fallbacks.switches || 0) + (sum.fallbacks.refusals || 0) : 0
     const ms = sum.startedAt ? Date.parse(sum.startedAt) : sum.mtimeMs
     if (ms) {
       const d = new Date(ms); const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      const b = s.byDay.get(day) || { day, costUsd: 0, sessions: 0, tiers: {} }
-      b.costUsd += sum.costUsd || 0; b.sessions++
+      const b = s.byDay.get(day) || { day, costUsd: 0, sessions: 0, tiers: {}, fallbacks: 0 }
+      b.costUsd += sum.costUsd || 0; b.sessions++; b.fallbacks += fbN
       b.tiers[tier] = (b.tiers[tier] || 0) + (sum.costUsd || 0)
       s.byDay.set(day, b)
     }
     const repo = repoOfCwd(sum.cwd || item.cwd)
-    const r = s.byRepo.get(repo) || { repo, costUsd: 0, sessions: 0, tiers: {} }
-    r.costUsd += sum.costUsd || 0; r.sessions++
+    const r = s.byRepo.get(repo) || { repo, costUsd: 0, sessions: 0, tiers: {}, fallbacks: 0 }
+    r.costUsd += sum.costUsd || 0; r.sessions++; r.fallbacks += fbN
     r.tiers[tier] = (r.tiers[tier] || 0) + (sum.costUsd || 0)
     s.byRepo.set(repo, r)
     s.byTier.set(tier, (s.byTier.get(tier) || 0) + (sum.costUsd || 0))

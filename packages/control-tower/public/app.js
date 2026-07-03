@@ -704,11 +704,14 @@ function resetTimeline() {
   els.reportLink.classList.add('hidden');
 }
 
+// Categorical palette — distinct hues, medium-high saturation (Monarch-style), each
+// legible on both dark and light. fable = hero violet; opus = cyan; sonnet = clean
+// gold (was a muddy brown); haiku = bright emerald (separated from opus cyan).
 const TIER_COLOR = {
-  haiku:  '#3b8e6e',
-  sonnet: '#9c6b2e',
-  opus:   '#a33',
-  fable:  '#6a4ca3',
+  haiku:  '#2fb888',
+  sonnet: '#d99a2b',
+  opus:   '#22a5c7',
+  fable:  '#8b5cf6',
 };
 
 function addPendingBar(data) {
@@ -1474,7 +1477,7 @@ function applyObservedFilters() {
 obsFilterEls.branch?.addEventListener('change', applyObservedFilters);
 obsFilterEls.dir?.addEventListener('change', applyObservedFilters);
 
-const TIER_COLORS = { haiku: '#3b8e6e', sonnet: '#9c6b2e', opus: '#a33', fable: '#8b5cf6' };
+const TIER_COLORS = { haiku: '#2fb888', sonnet: '#d99a2b', opus: '#22a5c7', fable: '#8b5cf6' };
 function tierColor(tier) { return TIER_COLORS[tier] || '#666'; }
 
 function statusClass(status) {
@@ -2761,10 +2764,19 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   // agents only — the subagent list endpoint doesn't expose inference time).
   const usage = sessionTierUsage(workflows, sub, wfDetails);
   const speedTiers = MODEL_ORDER.filter((t) => tierGenSpeed(usage, t) != null);
-  const speedLine = speedTiers.length
-    ? `<div class="si-speed" title="Output tokens ÷ model inference time, measured across this session's workflow agent calls (subagents don't report inference time here). Generation throughput only — not end-to-end run time (excludes tool execution and prompt processing).">`
-      + `measured generation speed (workflow agents): ${speedTiers.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} <strong>${Math.round(tierGenSpeed(usage, t))}</strong></span>`).join(' · ')} tok/s <span class="si-speed-note">· output ÷ inference time, not end-to-end</span></div>`
+  // Models that carry real cost here but have NO timed inference (main conversation +
+  // subagents don't report per-step timing in the tree) — name them so a model can't
+  // sit in the cost line yet silently vanish from the speed line (e.g. Fable).
+  const untimedTiers = MODEL_ORDER.filter((t) => modelTotals[t] && tierGenSpeed(usage, t) == null);
+  const untimedNote = untimedTiers.length
+    ? ` <span class="si-speed-note">· ${untimedTiers.join(', ')} not timed here (spent in the main chat / subagents, which don't report per-step inference time)</span>`
     : '';
+  const speedLine = speedTiers.length
+    ? `<div class="si-speed" title="Output tokens ÷ model inference time, measured across this session's workflow agent calls. The main conversation and subagents don't report per-step inference time, so models spent only there (often Fable) show cost but no tok/s. Generation throughput only — excludes tool execution and prompt processing.">`
+      + `measured generation speed (workflow agents): ${speedTiers.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} <strong>${Math.round(tierGenSpeed(usage, t))}</strong></span>`).join(' · ')} tok/s <span class="si-speed-note">· output ÷ inference time, not end-to-end</span>${untimedNote}</div>`
+    : (untimedTiers.length
+      ? `<div class="si-speed" title="The main conversation and subagents don't report per-step inference time, so throughput can't be measured for models spent only there.">generation speed:<span class="si-speed-note"> ${untimedTiers.join(', ')} spent in the main chat / subagents — no per-step timing to measure tok/s</span></div>`
+      : '');
 
   // Refusal-fallback rollup across the main conversation + every subagent node.
   // (Fable 5's safety classifier declines a request; Claude Code re-serves it on
@@ -2847,10 +2859,18 @@ function renderSessionInsight(workflows, sub, wfDetails) {
       + `<span class="si-sfrom">${fmtUsdShort(l.cur)}</span><span class="si-sarrow">→</span><span class="si-sto">${fmtUsdShort(l.subCost)}</span>`
       + `<span class="si-ssave ${l.save >= 0 ? 'pos' : 'neg'}">${l.save >= 0 ? 'save ' : '+'}${fmtUsdShort(Math.abs(l.save))}</span>`
       + `<span class="si-smult ${l.save >= 0 ? 'pos' : 'neg'}">${multTxt(l.cur, l.subCost)}</span></div>`;
-    savePanel = `<div class="si-save">`
-      + `<div class="si-lb-title">Potential savings<a class="si-ast" href="#si-method">*</a> — swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF}</span>${partialNote}</div>`
+    // Collapsed by default — a one-line chevron summary carries the headline number;
+    // the per-model breakdown + method live inside. Keeps the insight card scannable.
+    savePanel = `<details class="si-save si-save-fold">`
+      + `<summary class="si-save-sum"><span class="si-save-chev">▸</span>`
+      + `<span class="si-save-head">Potential savings<a class="si-ast" href="#si-method">*</a></span>`
+      + `<span class="si-save-amt">save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%, ${multTxt(savings.cur, savings.alt)})</span>`
+      + `<span class="si-legend muted">by swapping to open models</span></summary>`
+      + `<div class="si-save-body">`
+      + `<div class="si-lb-title si-save-subtitle">swap to open models <span class="si-legend muted">OpenRouter list price · ${SUBSTITUTE_ASOF}</span>${partialNote}</div>`
       + savings.lines.map(srow).join('')
-      + `<div class="si-stotal">≈ <strong>${fmtUsdShort(savings.alt)}</strong> instead of <strong>${fmtUsdShort(savings.cur)}</strong> on these tiers — save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%, <strong>${multTxt(savings.cur, savings.alt)}</strong>)</div></div>`;
+      + `<div class="si-stotal">≈ <strong>${fmtUsdShort(savings.alt)}</strong> instead of <strong>${fmtUsdShort(savings.cur)}</strong> on these tiers — save <strong>${fmtUsdShort(savings.save)}</strong> (${savings.pct}%, <strong>${multTxt(savings.cur, savings.alt)}</strong>)</div>`
+      + `</div></details>`;
   }
 
   // "*" methodology section — where every number comes from, and the idea behind it.
@@ -3389,6 +3409,9 @@ let stripTitleCache = null; // set by refreshSessionStrip for the session crumb
 function renderNav() {
   const host = document.getElementById('nav-crumbs'); if (!host) return;
   const inSession = SESSION_SCOPE_TABS.includes(currentTab);
+  // On Home the breadcrumb is just the root ("⌂ All folders") — redundant with the
+  // "All activity" card title, and its own band adds a dead horizontal level. Hide it.
+  document.querySelector('.crumb-bar')?.classList.toggle('crumb-bar-hidden', currentTab === 'home');
   const folderLabel = (() => {
     const p = projectsData && projectsData.projects && projectsData.projects.find((x) => x.slug === projectsData.activeProjectSlug);
     return p ? homeAbbrev(p.cwd || p.slug) : null;
@@ -3536,7 +3559,8 @@ function svgDailyChart(byDay) {
     const x = AX + 4 + i * (bw + 3);
     const totalH = Math.max(1, Math.round((d.costUsd / max) * plotH));
     const tierTxt = MODEL_ORDER.filter((t) => d.tiers && d.tiers[t]).map((t) => `${t} ${fmtUsdShort(d.tiers[t])}`).join(' · ');
-    const tip = `${d.day} · ${fmtUsdShort(d.costUsd)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}${tierTxt ? ' — ' + tierTxt : ''}`;
+    const fbTip = d.fallbacks ? ` · ⇄ ${d.fallbacks} Fable switch${d.fallbacks === 1 ? '' : 'es'}/refusal${d.fallbacks === 1 ? '' : 's'}` : '';
+    const tip = `${d.day} · ${fmtUsdShort(d.costUsd)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}${tierTxt ? ' — ' + tierTxt : ''}${fbTip}`;
     // Stacked by model tier (bottom-up in MODEL_ORDER)
     let segs = '', yCur = H - bottom;
     if (d.tiers && d.costUsd > 0) {
@@ -3549,7 +3573,9 @@ function svgDailyChart(byDay) {
     } else {
       segs = `<rect data-tip="${esc(tip)}" aria-label="${esc(tip)}" x="${x}" y="${H - bottom - totalH}" width="${bw}" height="${totalH}" rx="2" fill="var(--blue)" opacity="0.75"/>`;
     }
-    return segs + (i % 5 === 0 ? `<text x="${x}" y="${H - 4}" style="font-size:8.5px;fill:var(--gray-700)">${d.day.slice(5)}</text>` : '');
+    // ⚠ flag above any day that contains a Fable switch/refusal.
+    const flag = d.fallbacks ? `<text data-tip="${esc(tip)}" x="${x + bw / 2}" y="${top + 1}" text-anchor="middle" style="font-size:10px;cursor:default">⚠️</text>` : '';
+    return segs + flag + (i % 5 === 0 ? `<text x="${x}" y="${H - 4}" style="font-size:8.5px;fill:var(--gray-700)">${d.day.slice(5)}</text>` : '');
   }).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;height:auto" role="img" aria-label="Daily spend by model, last ${days.length} days">${grid}${bars}</svg>`;
 }
@@ -3564,29 +3590,54 @@ function renderAggregate(a) {
     + `<div class="si-chip"><div class="si-chip-k">Sessions</div><div class="si-chip-v">${fmtN(t.sessions)}</div><div class="si-chip-s">${fmtN(t.folders)} folders</div></div>`
     + `<div class="si-chip"><div class="si-chip-k">Output tokens</div><div class="si-chip-v">${fmtNshort(t.tokens.out)}</div><div class="si-chip-s">${fmtNshort(t.tokens.in)} fresh in</div></div>`
     + `<div class="si-chip"><div class="si-chip-k">Cache reads</div><div class="si-chip-v">${fmtNshort(t.tokens.cacheRd)}</div><div class="si-chip-s">${fmtNshort(t.tokens.cacheWr)} written</div></div>`
-    + ((t.fallbacks && (t.fallbacks.switches || t.fallbacks.refusals))
-      ? `<div class="si-chip si-chip-fallback" title="Fable 5's safety classifiers declined these requests (stop_reason: refusal); Claude Code re-served them on the fallback model. Sessions carry a ⇄ badge — open one to see exactly when it switched and what prompt triggered it.">`
-        + `<div class="si-chip-k">⇄ Switched off Fable</div><div class="si-chip-v">${fmtN((t.fallbacks.switches || 0) + (t.fallbacks.refusals || 0))}×</div>`
-        + `<div class="si-chip-s">${fmtN(t.fallbacks.refusals || 0)} refusals · ${fmtN(t.fallbacks.sticky || 0)} sticky turns on the fallback</div></div>`
-      : '')
     + `</div>`;
+
+  // ── Headline banner: getting switched off Fable ────────────────────────────
+  // The bulk of switching happens INSIDE subagents (measured 71 subagent transcripts
+  // vs 3 main), so this counts both layers. Front-and-center because it's the story.
+  const fbAgg = t.fallbacks || {};
+  // One "switched off Fable" event = a fallback re-serve (fallback block) OR a bare
+  // refusal (stop_reason:refusal). They're distinct events (never the same request),
+  // so the total is their sum. Split by WHERE (main-vs-subagent totals INCLUDE refusals),
+  // so the two location pills always add up to the headline.
+  const subTotal = fbAgg.subTotal != null ? fbAgg.subTotal : (fbAgg.subSwitches || 0);
+  const mainTotal = fbAgg.mainTotal != null ? fbAgg.mainTotal : (fbAgg.mainSwitches || 0);
+  const totalSwitches = subTotal + mainTotal;
+  const subShare = totalSwitches ? Math.round((subTotal / totalSwitches) * 100) : 0;
+  const catList = Object.entries(fbAgg.categories || {}).filter(([k]) => k && k !== 'unspecified')
+    .sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ×${v}`).join(' · ');
+  const fbBanner = totalSwitches
+    ? `<div class="fb-banner${a.done ? '' : ' fb-banner-scanning'}">`
+      + `<div class="fb-banner-lead">⇄ You got <strong>switched off Fable ${fmtN(totalSwitches)} time${totalSwitches === 1 ? '' : 's'}</strong>${a.done ? '' : ' <span class="fb-banner-sofar">(scanning…)</span>'}</div>`
+      + `<div class="fb-banner-sub">`
+      + `<span class="fb-banner-pill" title="Fable's classifier declined a request inside a subagent (a Task/Agent, or a Workflow agent() call), then Claude Code re-served it on the fallback model. Includes refusals + re-served switches.">`
+      + `<strong>${fmtN(subTotal)}</strong> in subagents</span>`
+      + `<span class="fb-banner-pill" title="Declined in your main conversation (refusals + switches).">`
+      + `<strong>${fmtN(mainTotal)}</strong> in main chat</span>`
+      + `<span class="fb-banner-pill fb-banner-pill-quiet" title="Distinct sessions where at least one switch or refusal happened.">`
+      + `across <strong>${fmtN(fbAgg.sessionsAffected || 0)}</strong> sessions</span>`
+      + (catList ? `<span class="fb-banner-cat" title="Refusal category from stop_details — why the classifier declined.">why: ${catList}</span>` : '')
+      + `</div>`
+      + `<div class="fb-banner-note"><strong>${fmtN(subTotal)} + ${fmtN(mainTotal)} = ${fmtN(totalSwitches)}</strong> — ${subShare}% inside subagents (mostly parallel Workflow agents)${fbAgg.refusals ? `, ${fmtN(fbAgg.refusals)} were outright refusals` : ''}. Open any ⇄ session to see the exact step and the prompt that triggered it.</div>`
+      + `</div>`
+    : '';
   const repoMax = a.byRepo.length ? a.byRepo[0].costUsd || 1 : 1;
   const repoBars = a.byRepo.slice(0, 8).map((r) => {
     const tierTxt = MODEL_ORDER.filter((t) => r.tiers && r.tiers[t]).map((t) => `${t} ${fmtUsdShort(r.tiers[t])}`).join(' · ');
     const segs = (r.tiers && r.costUsd > 0)
       ? MODEL_ORDER.filter((t) => r.tiers[t]).map((t) => `<span class="si-seg" style="flex:${r.tiers[t].toFixed(4)};background:${modelColor(t)}" title="${t} · ${fmtUsdShort(r.tiers[t])}"></span>`).join('')
       : `<span class="si-seg" style="flex:1;background:${SESSION_KIND_COLOR.workflow}"></span>`;
-    return `<div class="agg-repo-row" data-tip="${esc(r.repo)} · ${fmtUsd(r.costUsd)} · ${r.sessions} sessions${tierTxt ? ' — ' + tierTxt : ''}">`
-      + `<span class="agg-repo-name mono">${esc(truncTxt(r.repo, 26))}</span>`
+    const fbFlag = r.fallbacks ? `<span class="agg-repo-flag" title="⇄ ${r.fallbacks} Fable switch${r.fallbacks === 1 ? '' : 'es'}/refusal${r.fallbacks === 1 ? '' : 's'} in this folder">⚠️</span>` : '';
+    return `<div class="agg-repo-row" data-tip="${esc(r.repo)} · ${fmtUsd(r.costUsd)} · ${r.sessions} sessions${tierTxt ? ' — ' + tierTxt : ''}${r.fallbacks ? ' · ⇄ ' + r.fallbacks + ' Fable switches/refusals' : ''}">`
+      + `<span class="agg-repo-name mono">${fbFlag}${esc(truncTxt(r.repo, 26))}</span>`
       + `<span class="si-bar"><span class="si-bar-stack" style="width:${Math.max(2, Math.round((r.costUsd / repoMax) * 100))}%">${segs}</span></span>`
       + `<span class="si-cost mono">${fmtUsdShort(r.costUsd)}</span><span class="agg-repo-sess mono">${fmtN(r.sessions)} sess</span></div>`;
   }).join('');
   const tierTotal = a.byTier.reduce((x, y) => x + y.costUsd, 0) || 1;
   const tierSegs = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-seg" style="flex:${x.costUsd.toFixed(4)};background:${modelColor(x.tier)}" title="${x.tier} · ${fmtUsdShort(x.costUsd)} (${Math.round(x.costUsd / tierTotal * 100)}%)"></span>`).join('');
   const tierLegend = a.byTier.filter((x) => x.costUsd > 0).map((x) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(x.tier)}"></span>${x.tier} ${fmtUsdShort(x.costUsd)}</span>`).join(' ');
-  el.innerHTML = `<div class="home-sect">This machine — all folders, all time${prog}`
-    + `<span class="opt-copy"><button class="seg-mini-btn opt-btn" type="button" data-copy-optimize="machine" title="Copy a ready-to-paste prompt that asks Claude Code to analyze this spend and write a cost-discipline skill">⧉ copy optimization prompt</button>`
-    + `<button class="opt-view" type="button" data-view-optimize="machine">view</button></span></div>`
+  el.innerHTML = (prog ? `<div class="home-scanline">${prog}</div>` : '')
+    + fbBanner
     + chips
     + `<div class="agg-charts">`
     + `<div class="agg-chart"><div class="agg-chart-title">Daily spend — last 30 active days</div>${svgDailyChart(a.byDay)}</div>`
