@@ -13,7 +13,7 @@
 
 import { readFileSync, existsSync, readdirSync, watch } from 'node:fs'
 import { join, basename } from 'node:path'
-import { costOfUsage, tierFromModel } from './observe-cost.mjs'
+import { costOfUsage, costOfParse, tierFromModel } from './observe-cost.mjs'
 
 // ── Session dir resolution ────────────────────────────────────────────────────
 //
@@ -191,6 +191,8 @@ export function buildSegments(events) {
         model: cur.model || null,
         thinking: cur.thinking || '',
         turns: 1,
+        ...(cur.fallback ? { fallback: cur.fallback } : {}),
+        ...(cur.refusal ? { refusal: cur.refusal } : {}),
       }
     }
 
@@ -211,6 +213,8 @@ export function buildSegments(events) {
         last.detail.stopReason = detail.stopReason || last.detail.stopReason // last turn's reason
         last.detail.model = detail.model || last.detail.model
         last.detail.turns += 1
+        if (detail.fallback) last.detail.fallback = detail.fallback // a merged-in switch still flags the span
+        if (detail.refusal) last.detail.refusal = detail.refusal
       }
     } else {
       segments.push({ kind, startMs, endMs, tools: kind === 'tool' ? [...pendingTools] : [], detail })
@@ -279,6 +283,18 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
   // assistant rows — summing every row double-counts (verified 2× vs ccusage).
   // Usage is counted once per requestId; rows without one count individually.
   const seenRequestIds = new Set()
+  // Per-model usage buckets: mixed-model transcripts (Fable→Opus refusal fallbacks,
+  // /model switches) must be priced per served model, not at the first model's rate.
+  const usageByModel = {}
+  // Refusal-fallback rollup (Fable 5): stop_reason "refusal" = the safety classifier
+  // declined (a mid-stream refusal still bills the discarded partial); a "fallback"
+  // content block = the request was re-served by the fallback model; a
+  // fallback_message entry in usage.iterations with NO block = a sticky turn (the
+  // conversation stays routed to the fallback model for ~1h after a switch).
+  const fb = { refusals: 0, switches: 0, stickyTurns: 0, refusalOutputTokens: 0, from: null, to: null, firstAt: null, lastAt: null, categories: {}, events: [] }
+  const fbReqState = new Map() // requestId -> 'switch' | 'sticky' (upgrade sticky→switch if the block arrives on a later streamed row)
+  const FB_EVENTS_CAP = 20
+  let lastUserText = null // most recent human-looking user prompt — "what triggered the refusal"
   const textOf = (content) =>
     typeof content === 'string' ? content
       : Array.isArray(content) ? content.filter((b) => b && b.type === 'text').map((b) => b.text || '').join('\n')
@@ -321,6 +337,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
         }
       }
       if (task === null) { const t = textOf(msg.content).trim(); if (t) task = t }
+      { const t = textOf(msg.content).trim(); if (t && !t.startsWith('<')) lastUserText = trunc(t, 300) }
       // Title candidate: the first user message that reads like a HUMAN prompt (main-session
       // transcripts often open with harness tag blocks like <local-command-caveat>…).
       if (taskTitle === null) { const t = textOf(msg.content).trim(); if (t && !t.startsWith('<')) taskTitle = t }
@@ -335,14 +352,68 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
     const countUsage = requestId ? !seenRequestIds.has(requestId) : true
     if (requestId) seenRequestIds.add(requestId)
     if (countUsage) {
+      const cc = usage.cache_creation || null
+      // Unbucketed writes (older transcripts) count as 5m — the legacy ×1.25 rate.
+      const add5m = cc ? (cc.ephemeral_5m_input_tokens || 0) : (usage.cache_creation_input_tokens || 0)
+      const add1h = cc ? (cc.ephemeral_1h_input_tokens || 0) : 0
       totalUsage.input_tokens += usage.input_tokens || 0
       totalUsage.output_tokens += usage.output_tokens || 0
       totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0
       totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0
-      const cc = usage.cache_creation || null
-      // Unbucketed writes (older transcripts) count as 5m — the legacy ×1.25 rate.
-      totalUsage.cache_5m_input_tokens += cc ? (cc.ephemeral_5m_input_tokens || 0) : (usage.cache_creation_input_tokens || 0)
-      totalUsage.cache_1h_input_tokens += cc ? (cc.ephemeral_1h_input_tokens || 0) : 0
+      totalUsage.cache_5m_input_tokens += add5m
+      totalUsage.cache_1h_input_tokens += add1h
+      const mkey = msg.model || 'unknown'
+      const mu = usageByModel[mkey] || (usageByModel[mkey] = {
+        input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0, cache_5m_input_tokens: 0, cache_1h_input_tokens: 0,
+      })
+      mu.input_tokens += usage.input_tokens || 0
+      mu.output_tokens += usage.output_tokens || 0
+      mu.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0
+      mu.cache_read_input_tokens += usage.cache_read_input_tokens || 0
+      mu.cache_5m_input_tokens += add5m
+      mu.cache_1h_input_tokens += add1h
+      // Refusal accounting (once per request): the streamed partial is billed.
+      if (msg.stop_reason === 'refusal') {
+        fb.refusals++
+        fb.refusalOutputTokens += usage.output_tokens || 0
+        const cat = (msg.stop_details && msg.stop_details.category) || 'unspecified'
+        fb.categories[cat] = (fb.categories[cat] || 0) + 1
+        if (!fb.firstAt) fb.firstAt = entry.timestamp || null
+        fb.lastAt = entry.timestamp || null
+        if (fb.events.length < FB_EVENTS_CAP) fb.events.push({ at: entry.timestamp || null, kind: 'refusal', category: cat === 'unspecified' ? null : cat, model: msg.model || null, prompt: lastUserText })
+      }
+    }
+    // Fallback detection runs on EVERY row (the fallback block may arrive on a
+    // different streamed row than the one that carried usage), but counts once
+    // per requestId — a later block upgrades that request's sticky to a switch.
+    {
+      const fbBlock = Array.isArray(msg.content) ? msg.content.find((b) => b && b.type === 'fallback') : null
+      const iters = (usage && Array.isArray(usage.iterations)) ? usage.iterations : []
+      const fbIter = iters.find((i) => i && i.type === 'fallback_message')
+      if (fbBlock || fbIter) {
+        const key = requestId || `row:${assistantTurns}`
+        const prev = fbReqState.get(key)
+        if (fbBlock && prev !== 'switch') {
+          if (prev === 'sticky') fb.stickyTurns--
+          fb.switches++
+          fbReqState.set(key, 'switch')
+          if (fb.events.length < FB_EVENTS_CAP) fb.events.push({
+            at: entry.timestamp || null, kind: 'switch',
+            from: (fbBlock.from && fbBlock.from.model) || null, to: (fbBlock.to && fbBlock.to.model) || null,
+            prompt: lastUserText,
+          })
+        } else if (!fbBlock && !prev) {
+          fb.stickyTurns++
+          fbReqState.set(key, 'sticky')
+        }
+        const fromModel = (fbBlock && fbBlock.from && fbBlock.from.model) || (iters.find((i) => i && i.type === 'message') || {}).model || null
+        const toModel = (fbBlock && fbBlock.to && fbBlock.to.model) || (fbIter && fbIter.model) || msg.model || null
+        if (fromModel && !fb.from) fb.from = fromModel
+        if (toModel) fb.to = toModel
+        if (!fb.firstAt) fb.firstAt = entry.timestamp || null
+        fb.lastAt = entry.timestamp || null
+      }
     }
     const turnTools = []    // tool names this assistant turn requested (labels the tool span)
     const turnToolUses = [] // [{id,name,input}] for pairing with tool_results (full mode)
@@ -361,6 +432,10 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
       tsMs, type: 'assistant', tools: turnTools, text: trunc(turnText, 8000), toolUses: turnToolUses,
       usage: countUsage ? usage : {}, // dupe rows carry {} so per-segment costs don't double-count
       stopReason: msg.stop_reason || null, model: msg.model || null, thinking: trunc(thinkingOf(msg.content), 8000),
+      ...(Array.isArray(msg.content) && msg.content.some((b) => b && b.type === 'fallback')
+        ? { fallback: (({ from, to }) => ({ from: from && from.model, to: to && to.model }))(msg.content.find((b) => b && b.type === 'fallback')) }
+        : {}),
+      ...(msg.stop_reason === 'refusal' ? { refusal: { category: (msg.stop_details && msg.stop_details.category) || null } } : {}),
     })
     if (!light && turnText) conversation.push({ role: 'assistant', ts: entry.timestamp || null, text: trunc(turnText, 2000) })
     if (turnText) output = turnText
@@ -371,11 +446,14 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
     }
   }
 
+  // fallbacks is null on clean transcripts so summaries stay lean.
+  const fallbacks = (fb.refusals || fb.switches || fb.stickyTurns) ? fb : null
+
   if (light) {
     // Light timing derives from assistant-turn timestamps only (tool_result spans are
     // intentionally omitted), so a transcript with no assistant turns reports ms=0.
     return {
-      model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
+      model, totalUsage, usageByModel, fallbacks, firstTimestamp, lastTimestamp, cwd, gitBranch,
       task: titleChars > 0 ? trunc(taskTitle || task, titleChars) : null, output: null,
       assistantTurns, toolCalls, tools: [...tools], agentCalls,
       segments: [], inferenceMs: 0, toolMs: 0,
@@ -389,7 +467,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
   const CONV_CAP = 500
   const droppedTurns = Math.max(0, conversation.length - CONV_CAP)
   return {
-    model, totalUsage, firstTimestamp, lastTimestamp, cwd, gitBranch,
+    model, totalUsage, usageByModel, fallbacks, firstTimestamp, lastTimestamp, cwd, gitBranch,
     task: trunc(task, 8000), output: trunc(output, 20000),
     conversation: conversation.slice(-CONV_CAP), droppedTurns,
     assistantTurns, toolCalls, tools: [...tools], agentCalls,
@@ -454,8 +532,8 @@ export function reconstructRun(runId, sessDir, extraBeacons = [], beaconsByInstr
       cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
     }
 
-    // Cache-aware cost
-    const costUsd = costOfUsage(usage, model)
+    // Cache-aware cost (per served model when the transcript mixes models)
+    const costUsd = transcript ? costOfParse(transcript) : costOfUsage(usage, model)
 
     const phase = agEnt.phaseTitle || agEnt.phase || null
     const label = agEnt.label || `agent-${agEnt.index || ++callSeq}`

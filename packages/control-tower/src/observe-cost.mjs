@@ -65,6 +65,38 @@ export function costOfUsage(usage, model, price = PRICE) {
   return +(inputCost + createCost + readCost + outputCost).toFixed(8)
 }
 
+// Cost of a parseAgentTranscript result. Mixed-model transcripts (Fable→Opus
+// refusal fallbacks, /model switches) carry usageByModel — price each model's
+// bucket at its OWN rate and sum. Pricing the whole transcript at the first
+// model's rate overcharged fallback sessions (fable in = 2× opus in).
+export function costOfParse(parsed, price = PRICE) {
+  if (!parsed) return 0
+  const byModel = parsed.usageByModel
+  const models = byModel ? Object.keys(byModel) : []
+  if (models.length > 0) {
+    let sum = 0
+    for (const m of models) sum += costOfUsage(byModel[m], m === 'unknown' ? parsed.model : m, price)
+    return +sum.toFixed(8)
+  }
+  return costOfUsage(parsed.totalUsage || {}, parsed.model, price)
+}
+
+// The model that carries the most cost in a parse — the honest "tier" for a
+// mixed-model session (a fable session that spent 80% of its dollars on the
+// Opus fallback is an opus session for attribution purposes).
+export function dominantModel(parsed, price = PRICE) {
+  if (!parsed) return null
+  const byModel = parsed.usageByModel
+  const models = byModel ? Object.keys(byModel) : []
+  if (models.length <= 1) return parsed.model || models[0] || null
+  let best = parsed.model, bestCost = -1
+  for (const m of models) {
+    const c = costOfUsage(byModel[m], m === 'unknown' ? parsed.model : m, price)
+    if (c > bestCost) { bestCost = c; best = m === 'unknown' ? parsed.model : m }
+  }
+  return best
+}
+
 // Naive cost (no cache adjustment) — used to show savings vs. naive
 export function naiveCostOfUsage(usage, model, price = PRICE) {
   const tier = tierFromModel(model)

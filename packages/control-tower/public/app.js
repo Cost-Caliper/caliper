@@ -1228,6 +1228,23 @@ function segmentDetailHtml(seg, c) {
     + `<span class="tl-tip-dot" style="background:${dot}"></span>`
     + `<strong style="color:var(--gray-1000)">${isTool ? 'Tool call' : 'Inference'}</strong> · <span class="mono">${dur}</span></div>`;
   const d = seg.detail || {};
+  // Refusal-fallback banner: the headline moment — when and why this step left Fable.
+  const fbBanner = (d.fallback || d.refusal)
+    ? `<div class="cd-fallback-banner">`
+      + (d.refusal
+        ? `⛔ <strong>Fable refused this request</strong> (safety classifier${d.refusal.category ? ` · category: ${esc(d.refusal.category)}` : ''}) — the streamed partial is still billed.`
+        : '')
+      + (d.fallback
+        ? `${d.refusal ? '<br>' : ''}⇄ <strong>Switched off Fable here</strong> — re-served by <span class="mono">${esc(String(d.fallback.to || 'fallback').replace(/^claude-/, ''))}</span>; sticky routing keeps later turns there (~1h). Priced at the serving model's own rate.`
+        : '')
+      + (() => {
+        // The prompt that triggered it — from the transcript's fallback event log.
+        const evs = (c.fallbacks && Array.isArray(c.fallbacks.events)) ? c.fallbacks.events : [];
+        const ev = evs.find((e) => e && e.kind === (d.fallback ? 'switch' : 'refusal') && e.prompt) || evs.find((e) => e && e.prompt);
+        return ev ? `<div style="margin-top:7px;font-size:11.5px;color:var(--gray-900)">triggering prompt: <span class="mono" style="color:var(--gray-1000)">“${esc(truncTxt(ev.prompt, 160))}”</span></div>` : '';
+      })()
+      + `</div>`
+    : '';
   if (isTool) {
     const calls = Array.isArray(d.calls) ? d.calls : [];
     if (!calls.length) return head + `<div class="muted" style="font-size:12px">No tool-call payload captured for this span.</div>`;
@@ -1275,7 +1292,7 @@ function segmentDetailHtml(seg, c) {
   const thinking = d.thinking
     ? `<div style="font-size:11px;color:var(--gray-700);margin:0 0 3px">Reasoning (extended thinking)</div><pre class="cd-pre" style="max-height:30vh">${esc(d.thinking)}</pre>`
     : '';
-  return head + decided + metricsRow + thinking
+  return head + fbBanner + decided + metricsRow + thinking
     + `<div style="font-size:11px;color:var(--gray-700);margin:8px 0 3px">Model output for this step</div>`
     + `<pre class="cd-pre cd-pre-tall">${esc(d.text || '(no text — this step only emitted a tool call)')}</pre>`;
 }
@@ -1682,6 +1699,21 @@ function buildTimelineSvg(calls) {
       }).join('');
       // hairline frame so adjacent same-color runs still read as one bar (non-interactive)
       bar += `<rect x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="2" fill="none" stroke="var(--border)" stroke-width="0.5" style="pointer-events:none"></rect>`;
+      // ⚠ refusal-fallback flags: a marker at the exact step where Fable refused or the
+      // request was re-served by the fallback model. Clicking it opens that step.
+      bar += segs.map((s, si) => {
+        const d = s.detail || {};
+        if (!d.fallback && !d.refusal) return '';
+        const f0 = (s.startMs - segs[0].startMs) / segTotal;
+        const mx = bx + f0 * bw;
+        const what = d.fallback
+          ? `Switched off Fable here — re-served by ${(d.fallback.to || 'the fallback model').replace(/^claude-/, '')}`
+          : `Fable refused here (safety classifier${d.refusal && d.refusal.category ? ': ' + d.refusal.category : ''})`;
+        return `<g role="button" data-call-idx="${i}" data-seg-idx="${si}" style="cursor:pointer">`
+          + `<line x1="${mx.toFixed(1)}" y1="${y - 1}" x2="${mx.toFixed(1)}" y2="${y + 4 + barH + 1}" stroke="#f59e0b" stroke-width="1.5"></line>`
+          + `<text x="${mx.toFixed(1)}" y="${y + 1}" text-anchor="middle" style="font-size:9.5px">⚠️</text>`
+          + `<title>${esc(what)} — click for the step detail</title></g>`;
+      }).join('');
     } else {
       // Fallback: no per-segment data → single tier-colored bar.
       bar = `<rect data-call-idx="${i}" x="${bx}" y="${y + 4}" width="${bw}" height="${barH}" rx="3" fill="${tierColor(c.tier)}" opacity="0.88" style="cursor:pointer"><title>${esc(c.label || '')} · ${fmtMs(c.ms)} · ${fmtUsd(c.costUsd)}</title></rect>`;
@@ -2734,6 +2766,30 @@ function renderSessionInsight(workflows, sub, wfDetails) {
       + `measured generation speed (workflow agents): ${speedTiers.map((t) => `<span class="si-lg"><span class="si-lg-dot" style="background:${modelColor(t)}"></span>${t} <strong>${Math.round(tierGenSpeed(usage, t))}</strong></span>`).join(' · ')} tok/s <span class="si-speed-note">· output ÷ inference time, not end-to-end</span></div>`
     : '';
 
+  // Refusal-fallback rollup across the main conversation + every subagent node.
+  // (Fable 5's safety classifier declines a request; Claude Code re-serves it on
+  // the fallback model — sticky routing then keeps later turns there for ~1h.)
+  const fbAgg = { refusals: 0, switches: 0, sticky: 0 };
+  {
+    const seenFb = new Set();
+    const collectFb = (n) => {
+      if (!n || !n.fallbacks || seenFb.has(n)) return; seenFb.add(n);
+      fbAgg.refusals += n.fallbacks.refusals || 0;
+      fbAgg.switches += n.fallbacks.switches || 0;
+      fbAgg.sticky += (n.fallbacks.stickyTurns != null ? n.fallbacks.stickyTurns : n.fallbacks.sticky) || 0;
+    };
+    if (sub && sub.root) { collectFb(sub.root); for (const c of allSubNodes(sub.root)) collectFb(c); }
+  }
+  const fbRoot = (sub && sub.root && sub.root.fallbacks) || {};
+  const shortM = (m) => String(m || '').replace(/^claude-/, '');
+  const fallbackLine = (fbAgg.refusals || fbAgg.switches)
+    ? `<div class="si-fallback" title="Fable 5's safety classifiers declined one or more requests (stop_reason: refusal — a mid-stream refusal still bills the discarded partial). Claude Code re-served them on the fallback model; sticky routing keeps later turns there for ~1h. Every turn is priced at the model that actually served it.">`
+      + `⇄ refusal fallback: <strong>${fbAgg.refusals}</strong> refusal${fbAgg.refusals === 1 ? '' : 's'} on ${esc(shortM(fbRoot.from || 'claude-fable-5'))}`
+      + ` · <strong>${fbAgg.switches}</strong> switch${fbAgg.switches === 1 ? '' : 'es'} to ${esc(shortM(fbRoot.to || 'claude-opus-4-8'))}`
+      + (fbAgg.sticky ? ` · <strong>${fbAgg.sticky}</strong> sticky turn${fbAgg.sticky === 1 ? '' : 's'} served there` : '')
+      + `</div>`
+    : '';
+
   const spanTxt = siDur(span);
   const parts = [];
   if (mainCost > 0 || items.some((i) => i.kind === 'main')) parts.push('the main conversation');
@@ -2819,7 +2875,7 @@ function renderSessionInsight(workflows, sub, wfDetails) {
   host.innerHTML = `<div class="session-insight-card">`
     + `<div class="si-headline">${headline}</div>`
     + `<div class="si-chips">${chips}</div>`
-    + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${speedLine}${rows}${more}</div>`
+    + `<div class="si-lb"><div class="si-lb-title">Where the estimated cost went ${legend}</div>${speedLine}${fallbackLine}${rows}${more}</div>`
     + savePanel
     + `<div class="si-foot muted">$ = cache-aware <em>estimate</em>, not billed · bars split by model · shares are of the items shown here · click a bar to open it`
     + ` · <span class="opt-copy"><button class="seg-mini-btn opt-btn" type="button" data-copy-optimize="session" title="Copy a prompt asking Claude Code to make sessions like this cheaper/better">⧉ copy optimization prompt</button><button class="opt-view" type="button" data-view-optimize="session">view</button></span></div>`
@@ -3121,6 +3177,7 @@ function sessRowHtml(s, activeId, isEmpty) {
   const badges = [];
   if (s.workflows) badges.push(`<span class="sess-badge" data-open="observe" title="Open this session's Workflows" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
   if (s.subagents) badges.push(`<span class="sess-badge" data-open="subagents" title="Open this session's Subagents" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  if (s.fallbacks && (s.fallbacks.switches || s.fallbacks.refusals)) badges.push(`<span class="sess-badge sess-badge-fallback" title="Fable 5 refusal fallback: ${s.fallbacks.refusals || 0} refusal(s), ${s.fallbacks.switches || 0} switch(es) to the fallback model, ${s.fallbacks.sticky || 0} turn(s) served on it via sticky routing">⇄ ${(s.fallbacks.switches || 0) + (s.fallbacks.refusals || 0)} fallback</span>`);
   const activePill = s.id === activeId ? '<span class="sess-active-pill" title="This is the session the Active Session / Workflows / Subagents tabs are currently showing">active</span>' : '';
   const livePill = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now. Stats are its progress so far; hit Refresh to update.">live</span>' : '';
   const ghost = isEmpty(s) ? ' sess-row-ghost' : '';
@@ -3287,6 +3344,7 @@ async function refreshSessionStrip() {
   const badges = []
   if (s.workflows) badges.push(`<span class="sess-badge" data-open="observe" title="Open this session's Workflows" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
   if (s.subagents) badges.push(`<span class="sess-badge" data-open="subagents" title="Open this session's Subagents" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  if (s.fallbacks && (s.fallbacks.switches || s.fallbacks.refusals)) badges.push(`<span class="sess-badge sess-badge-fallback" title="Fable 5 refusal fallback: ${s.fallbacks.refusals || 0} refusal(s), ${s.fallbacks.switches || 0} switch(es) to the fallback model, ${s.fallbacks.sticky || 0} turn(s) served on it via sticky routing">⇄ ${(s.fallbacks.switches || 0) + (s.fallbacks.refusals || 0)} fallback</span>`);
   const liveNow = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — this session appears to be running right now">live</span>' : '';
   strip.innerHTML = `<span class="sess-strip-label">Viewing session</span>`
     + `<span class="sess-strip-title" title="${esc(s.title || s.id)}">“${esc(truncTxt(s.title || '(no prompt captured)', 90))}”</span>${liveNow}`
@@ -3381,6 +3439,7 @@ function homeSessRowHtml(s) {
   const badges = [];
   if (s.workflows) badges.push(`<span class="sess-badge" data-open="observe" title="Open this session's Workflows" style="border-color:${SESSION_KIND_COLOR.workflow};color:${SESSION_KIND_COLOR.workflow}">${s.workflows} wf</span>`);
   if (s.subagents) badges.push(`<span class="sess-badge" data-open="subagents" title="Open this session's Subagents" style="border-color:${SESSION_KIND_COLOR.subagent};color:${SESSION_KIND_COLOR.subagent}">${s.subagents} sub</span>`);
+  if (s.fallbacks && (s.fallbacks.switches || s.fallbacks.refusals)) badges.push(`<span class="sess-badge sess-badge-fallback" title="Fable 5 refusal fallback: ${s.fallbacks.refusals || 0} refusal(s), ${s.fallbacks.switches || 0} switch(es) to the fallback model, ${s.fallbacks.sticky || 0} turn(s) served on it via sticky routing">⇄ ${(s.fallbacks.switches || 0) + (s.fallbacks.refusals || 0)} fallback</span>`);
   const live = (Date.now() - (s.mtimeMs || 0)) < 120000 ? '<span class="sess-live-pill" title="Transcript updated in the last 2 minutes — appears to be running now">live</span>' : '';
   return `<button class="sess-row home-sess-row" type="button" data-home-session="${esc(s.id)}" data-home-project="${esc(s.projectSlug)}" title="${esc(s.projectCwd || s.projectSlug)}">`
     + `<span class="sess-time mono">${s.mtimeMs ? sessDayLabel(s.mtimeMs) + ' ' + sessClock(s.mtimeMs) : '—'}</span>`
@@ -3505,6 +3564,11 @@ function renderAggregate(a) {
     + `<div class="si-chip"><div class="si-chip-k">Sessions</div><div class="si-chip-v">${fmtN(t.sessions)}</div><div class="si-chip-s">${fmtN(t.folders)} folders</div></div>`
     + `<div class="si-chip"><div class="si-chip-k">Output tokens</div><div class="si-chip-v">${fmtNshort(t.tokens.out)}</div><div class="si-chip-s">${fmtNshort(t.tokens.in)} fresh in</div></div>`
     + `<div class="si-chip"><div class="si-chip-k">Cache reads</div><div class="si-chip-v">${fmtNshort(t.tokens.cacheRd)}</div><div class="si-chip-s">${fmtNshort(t.tokens.cacheWr)} written</div></div>`
+    + ((t.fallbacks && (t.fallbacks.switches || t.fallbacks.refusals))
+      ? `<div class="si-chip si-chip-fallback" title="Fable 5's safety classifiers declined these requests (stop_reason: refusal); Claude Code re-served them on the fallback model. Sessions carry a ⇄ badge — open one to see exactly when it switched and what prompt triggered it.">`
+        + `<div class="si-chip-k">⇄ Switched off Fable</div><div class="si-chip-v">${fmtN((t.fallbacks.switches || 0) + (t.fallbacks.refusals || 0))}×</div>`
+        + `<div class="si-chip-s">${fmtN(t.fallbacks.refusals || 0)} refusals · ${fmtN(t.fallbacks.sticky || 0)} sticky turns on the fallback</div></div>`
+      : '')
     + `</div>`;
   const repoMax = a.byRepo.length ? a.byRepo[0].costUsd || 1 : 1;
   const repoBars = a.byRepo.slice(0, 8).map((r) => {

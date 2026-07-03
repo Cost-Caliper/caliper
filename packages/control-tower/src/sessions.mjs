@@ -10,7 +10,7 @@ import { readdirSync, statSync, existsSync, openSync, readSync, closeSync, readF
 import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { parseAgentTranscript } from './observer.mjs'
-import { costOfUsage, tierFromModel } from './observe-cost.mjs'
+import { costOfUsage, costOfParse, dominantModel, tierFromModel } from './observe-cost.mjs'
 
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const SESSION_FILE_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
@@ -20,9 +20,10 @@ const summaryCache = new Map() // absolute jsonl path -> { mtimeMs, size, summar
 // ── Disk-backed summary cache ─────────────────────────────────────────────────
 // Machine-wide aggregation summarizes EVERY session once (multi-GB of transcripts) —
 // persisting summaries makes that a one-time cost across restarts. Versioned: bump
-// CACHE_VERSION whenever the cost model or summary shape changes (v2 = TTL-bucketed
+// CACHE_VERSION whenever the cost model or summary shape changes (v3 = per-model
+// cost attribution + refusal-fallback counts; v2 = TTL-bucketed
 // cache pricing + requestId dedup of 2026-07-01).
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 const CACHE_FILE = join(homedir() || tmpdir(), '.cache', 'workflow-lens', `session-summaries-v${CACHE_VERSION}.json`)
 let diskCacheLoaded = false
 let unsavedSummaries = 0
@@ -96,9 +97,10 @@ export function summarizeSessionFile(projectDir, id) {
       in: u.input_tokens, out: u.output_tokens,
       cacheWr: u.cache_creation_input_tokens, cacheRd: u.cache_read_input_tokens,
     },
-    costUsd: +costOfUsage(u, parsed.model).toFixed(6),
+    costUsd: +costOfParse(parsed).toFixed(6),
     model: parsed.model || null,
-    tier: tierFromModel(parsed.model),
+    tier: tierFromModel(dominantModel(parsed)),
+    ...(parsed.fallbacks ? { fallbacks: { switches: parsed.fallbacks.switches, sticky: parsed.fallbacks.stickyTurns, refusals: parsed.fallbacks.refusals } } : {}),
     cwd: parsed.cwd || null,
     gitBranch: parsed.gitBranch || null,
     workflows: hasDir ? countDir(join(sessDir, 'workflows'), /^wf_.*\.json$/) : 0,
@@ -149,7 +151,7 @@ export function aggregateMachine(projectsRoot, { budgetMs = 1500 } = {}) {
     }
     aggState = {
       root: projectsRoot, queue, idx: 0,
-      totals: { sessions: 0, costUsd: 0, tokens: { in: 0, out: 0, cacheRd: 0, cacheWr: 0 }, folders: new Set() },
+      totals: { sessions: 0, costUsd: 0, tokens: { in: 0, out: 0, cacheRd: 0, cacheWr: 0 }, folders: new Set(), fallbacks: { switches: 0, sticky: 0, refusals: 0 } },
       byDay: new Map(), byRepo: new Map(), byTier: new Map(),
     }
   }
@@ -165,6 +167,11 @@ export function aggregateMachine(projectsRoot, { budgetMs = 1500 } = {}) {
     s.totals.tokens.out += sum.tokens?.out || 0
     s.totals.tokens.cacheRd += sum.tokens?.cacheRd || 0
     s.totals.tokens.cacheWr += sum.tokens?.cacheWr || 0
+    if (sum.fallbacks) {
+      s.totals.fallbacks.switches += sum.fallbacks.switches || 0
+      s.totals.fallbacks.sticky += sum.fallbacks.sticky || 0
+      s.totals.fallbacks.refusals += sum.fallbacks.refusals || 0
+    }
     s.totals.folders.add(item.dir)
     const tier = sum.tier || 'other'
     const ms = sum.startedAt ? Date.parse(sum.startedAt) : sum.mtimeMs
@@ -188,7 +195,7 @@ export function aggregateMachine(projectsRoot, { budgetMs = 1500 } = {}) {
   return {
     done,
     progress: { scannedSessions: s.idx, totalSessions: s.queue.length },
-    totals: { sessions: s.totals.sessions, folders: s.totals.folders.size, costUsd: round(s.totals.costUsd), tokens: { ...s.totals.tokens } },
+    totals: { sessions: s.totals.sessions, folders: s.totals.folders.size, costUsd: round(s.totals.costUsd), tokens: { ...s.totals.tokens }, fallbacks: { ...s.totals.fallbacks } },
     byDay: [...s.byDay.values()].sort((a, b) => a.day < b.day ? -1 : 1).map((d) => ({ ...d, costUsd: round(d.costUsd) })),
     byRepo: [...s.byRepo.values()].sort((a, b) => b.costUsd - a.costUsd).map((r) => ({ ...r, costUsd: round(r.costUsd) })),
     byTier: [...s.byTier.entries()].map(([tier, costUsd]) => ({ tier, costUsd: round(costUsd) })).sort((a, b) => b.costUsd - a.costUsd),

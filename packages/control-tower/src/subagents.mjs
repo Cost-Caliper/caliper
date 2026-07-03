@@ -17,7 +17,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { parseAgentTranscript } from './observer.mjs'
-import { costOfUsage, tierFromModel } from './observe-cost.mjs'
+import { costOfUsage, costOfParse, tierFromModel } from './observe-cost.mjs'
 
 export const MAIN_SESSION = '__MAIN_SESSION__'
 
@@ -151,7 +151,8 @@ function lightNode(agentId, meta, parsed, ownerEntry, transcriptMissing = false)
       cacheWr: usage.cache_creation_input_tokens || 0,
       cacheRd: usage.cache_read_input_tokens || 0,
     },
-    costUsd: +costOfUsage(usage, model).toFixed(6),
+    costUsd: +costOfParse(parsed).toFixed(6),
+    fallbacks: parsed.fallbacks || null,
     ms: msBetween(parsed.firstTimestamp, parsed.lastTimestamp),
     startedAt: parsed.firstTimestamp || null,
     startedAtMs: parsed.firstTimestamp ? (Date.parse(parsed.firstTimestamp) || 0) : 0,
@@ -239,7 +240,8 @@ export function scanSubagentTree(sessDir) {
       in: mainParse.totalUsage.input_tokens, out: mainParse.totalUsage.output_tokens,
       cacheWr: mainParse.totalUsage.cache_creation_input_tokens, cacheRd: mainParse.totalUsage.cache_read_input_tokens,
     },
-    costUsd: +costOfUsage(mainParse.totalUsage, mainParse.model).toFixed(6),
+    costUsd: +costOfParse(mainParse).toFixed(6),
+    fallbacks: mainParse.fallbacks || null,
     ms: msBetween(mainParse.firstTimestamp, mainParse.lastTimestamp),
     startedAt: mainParse.firstTimestamp || null,
     startedAtMs: mainParse.firstTimestamp ? (Date.parse(mainParse.firstTimestamp) || 0) : 0,
@@ -282,7 +284,8 @@ export function reconstructSubagent(sessDir, agentId) {
     outTok: usage.output_tokens || 0,
     cacheCreationTok: usage.cache_creation_input_tokens || 0,
     cacheReadTok: usage.cache_read_input_tokens || 0,
-    costUsd: +costOfUsage(usage, p.model).toFixed(6),
+    costUsd: +costOfParse(p).toFixed(6),
+    fallbacks: p.fallbacks || null,
     segments: p.segments || [],
     inferenceMs: p.inferenceMs || 0,
     toolMs: p.toolMs || 0,
