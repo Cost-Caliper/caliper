@@ -37,7 +37,9 @@ const fmtNshort = (n) => {
 };
 const fmtUsdShort = (n) => {
   const v = Number(n || 0);
-  if (v >= 100) return '$' + Math.round(v);
+  // Thousands separators so real values read as real (e.g. $16,965, not $16965)
+  // and whole-dollar rounding above $100 doesn't look artificially clean.
+  if (v >= 100) return '$' + Math.round(v).toLocaleString('en-US');
   if (v >= 1) return '$' + v.toFixed(2);
   return '$' + v.toFixed(3);
 };

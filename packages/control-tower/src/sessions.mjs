@@ -23,7 +23,7 @@ const summaryCache = new Map() // absolute jsonl path -> { mtimeMs, size, summar
 // CACHE_VERSION whenever the cost model or summary shape changes (v3 = per-model
 // cost attribution + refusal-fallback counts; v2 = TTL-bucketed
 // cache pricing + requestId dedup of 2026-07-01).
-const CACHE_VERSION = 5
+const CACHE_VERSION = 6
 const CACHE_FILE = join(homedir() || tmpdir(), '.cache', 'workflow-lens', `session-summaries-v${CACHE_VERSION}.json`)
 let diskCacheLoaded = false
 let unsavedSummaries = 0

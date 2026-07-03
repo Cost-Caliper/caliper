@@ -1821,3 +1821,15 @@ a.brand { text-decoration: none; }
 .agg-mrow-name { color: var(--gray-1000); display: flex; align-items: center; gap: 6px; text-transform: capitalize; }
 .agg-mrow-val { text-align: right; color: var(--gray-1000); }
 .agg-mrow-pct { text-align: right; color: var(--gray-700); }
+
+/* Home: drop the outer bounding card so sections sit directly on the page
+   (StackAI/Monarch style — individual cards on the page bg, no box-in-a-box).
+   Kills the "empty gray band" the wrapping card + its margin created. */
+#tab-home .card.observed-panel {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin-top: 6px;
+}
+#tab-home .observed-caveat { margin-top: 16px; padding: 0 2px; }

@@ -293,6 +293,7 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
   // conversation stays routed to the fallback model for ~1h after a switch).
   const fb = { refusals: 0, switches: 0, stickyTurns: 0, refusalOutputTokens: 0, from: null, to: null, firstAt: null, lastAt: null, categories: {}, events: [] }
   const fbReqState = new Map() // requestId -> 'switch' | 'sticky' (upgrade sticky→switch if the block arrives on a later streamed row)
+  const seenRefusalReqs = new Set() // refusal dedup — independent of the usage-dedup set
   const FB_EVENTS_CAP = 20
   let lastUserText = null // most recent human-looking user prompt — "what triggered the refusal"
   const textOf = (content) =>
@@ -373,8 +374,16 @@ export function parseAgentTranscript(transcriptPath, { light = false, titleChars
       mu.cache_read_input_tokens += usage.cache_read_input_tokens || 0
       mu.cache_5m_input_tokens += add5m
       mu.cache_1h_input_tokens += add1h
-      // Refusal accounting (once per request): the streamed partial is billed.
-      if (msg.stop_reason === 'refusal') {
+    }
+    // Refusal accounting — dedup on its OWN key, NOT the usage-dedup set. A streamed
+    // refusal repeats its requestId across several rows; the refusal row is often NOT
+    // the first (a partial with stop_reason:null precedes it), so counting inside the
+    // countUsage block silently dropped those refusals (undercounted 26→22). Count once
+    // per requestId here, regardless of usage ordering. Verified vs an independent scan.
+    if (msg.stop_reason === 'refusal') {
+      const rkey = requestId || `row:${assistantTurns}`
+      if (!seenRefusalReqs.has(rkey)) {
+        seenRefusalReqs.add(rkey)
         fb.refusals++
         fb.refusalOutputTokens += usage.output_tokens || 0
         const cat = (msg.stop_details && msg.stop_details.category) || 'unspecified'
