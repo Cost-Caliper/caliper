@@ -36,7 +36,8 @@
 |---|---|
 | ![Folder view](docs/screenshots/folder.png) | ![Session overview](docs/screenshots/session.png) |
 
-- **Machine-wide analytics** — all-time spend, daily charts stacked by model, spend by repo, cache economics.
+- **Machine-wide analytics** — total spend, daily charts stacked by model, spend by repo, cache economics.
+- **"Nerfed by Fable" tracking** — counts every time Fable 5's safety classifier declined a request and Claude Code re-served it on the fallback model (refusals + switches), split by where it happened (mostly inside parallel Workflow subagents), down to the exact step and the prompt that triggered it.
 - **Everything** — plain chats, Workflow runs, subagents (nested too), full conversations, per-step timelines.
 - **The loop** — one click copies your real numbers, file paths, and live API pointers into a prompt; Claude analyzes the spend, edits the workflow that caused it, or writes you a cost skill.
 - **Self-updating** — checks this repo and offers one-click updates.
