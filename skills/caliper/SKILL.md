@@ -49,6 +49,30 @@ with `curl -fsS http://localhost:<port>/v1/health` and report that URL to the us
 shown there is reconstructed from transcripts with the cache-aware convention
 (cache_creation ×1.25, cache_read ×0.10), so it is an estimate, not a billed figure.
 
+## Automatic hooks (SessionStart / Stop / SessionEnd)
+
+The plugin ships `hooks/hooks.json` (+ `scripts/hooks/*.mjs`) so the dashboard stays
+visible without the user having to invoke `/caliper` themselves:
+
+- **SessionStart** — reuses an already-running Control Tower if one is alive, else
+  launches one (same logic as `scripts/launch-control-tower.mjs`, factored into
+  `packages/control-tower/src/launch-support.mjs`); reports the URL via `systemMessage`
+  (+ the prior session's recap, if any).
+- **Stop** (every turn) — computes running spend + agent-type tally directly from the
+  transcript (`packages/control-tower/src/hook-support.mjs::computeRecap`, reusing
+  `summarizeSessionFile` + `scanSubagentTree` — the SAME numbers the dashboard shows,
+  never a second cost model) and shows a `💰 Session spend: …` reminder only once spend
+  has grown past `CALIPER_REMINDER_THRESHOLD_USD` (default `0.05`) since it was last
+  shown. Sets only `systemMessage` — never `decision`/`additionalContext`, which would
+  force Claude to keep responding just to display a reminder.
+- **SessionEnd** — the dashboard is a machine-wide singleton, reference-counted by a
+  lock file per active session (`~/.cache/workflow-lens/hook-locks/`); it's only killed
+  once no session still holds a lock, so ending one session never yanks the dashboard
+  out from under another concurrent one.
+
+`CALIPER_DISABLE_HOOKS=1` makes all three fully inert. See the README's "Automatic
+session hooks" section for the user-facing summary.
+
 ## workflow-lens CLI (keyless unless noted)
 
 ```sh
