@@ -4,6 +4,42 @@ All notable changes to Caliper. Versions map to `.claude-plugin/plugin.json`; th
 in-app update pill compares against this repo. (Entries before 0.27.0 are
 backfilled from commit history.)
 
+## 0.30.0 — 2026-07-06
+
+- **`/distill-fable`** — a new skill for the machine-wide `claude-fable-5` deprecation:
+  uses Fable itself, live, as a planner/analyzer over its own real past assistant turns
+  (main sessions AND subagents, everywhere on `~/.claude/projects`) and, with consent,
+  writes a personal `~/.claude/skills/fable-thinking/SKILL.md` teaching Opus to
+  approximate its approach. Every heuristic in the output must cite a real excerpt or
+  it's dropped, matching this repo's grounding-check convention
+  (`workflow-lens/src/learnings.mjs`).
+- New `packages/control-tower/src/fable-evidence.mjs::gatherFableEvidence()` — a
+  two-phase (cheap disk-cached shortlist, then per-turn extraction) evidence gatherer.
+  Deliberately does its own raw-JSONL read rather than reusing `observer.mjs`'s
+  `parseAgentTranscript`, whose `segments` merge consecutive same-kind turns and would
+  misattribute a genuine Fable turn immediately followed by a post-refusal-fallback Opus
+  turn in the same file.
+
+## 0.29.0 — 2026-07-06
+
+The sticky release: Caliper now surfaces itself automatically instead of waiting to be
+invoked.
+
+- **Automatic SessionStart/Stop/SessionEnd hooks** (`hooks/hooks.json`,
+  `scripts/hooks/*.mjs`) — the dashboard launches (or is reused) at session start with
+  its URL reported to the user; a throttled `💰 Session spend: …` reminder shows on
+  `Stop` once spend has grown by a meaningful amount (`CALIPER_REMINDER_THRESHOLD_USD`,
+  default `$0.05`) since it was last shown; `SessionEnd` tears the dashboard down once
+  no other active session still holds a lock on it, so nothing leaks as an orphaned
+  background process. `CALIPER_DISABLE_HOOKS=1` opts out entirely.
+- The reminder reuses the exact same cost reconstruction the dashboard shows
+  (`summarizeSessionFile` + `scanSubagentTree`) — never a second, possibly divergent
+  cost model.
+- `scripts/launch-control-tower.mjs`'s port-picking, dependency bootstrap, and
+  session-dir discovery were extracted into `packages/control-tower/src/launch-support.mjs`
+  so the manual `/caliper` command and the new SessionStart hook share one
+  implementation.
+
 ## 0.28.0 — 2026-07-03
 
 The redesign release: the dashboard is now the caliper.run design system, end to end.

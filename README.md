@@ -19,6 +19,22 @@
 
 - **`/caliper`** — launch the dashboard, pointed at your current session
 - **`/optimize-spend`** — Claude reads your spend and, with consent, writes you a personalized cost-discipline skill
+- **`/distill-fable`** — before Fable is removed from Claude Code, use it to analyze its own real past work on this machine and, with consent, write a personal skill teaching Opus to approximate its thinking style
+
+### Automatic session hooks
+
+Once installed, Caliper stays visible without you having to remember it's there:
+
+- **Session start** — quietly makes sure the dashboard is running (reuses it if already up; starts one on a random loopback port otherwise — no browser is opened) and reports the URL, plus a recap of your last session's spend if there is one.
+- **Every turn** — a throttled `💰 Session spend: $X.XXXX · agents: …` reminder, shown only once spend has grown by a meaningful amount since it was last shown.
+- **Session end** — the dashboard is only shut down once no other active Claude Code session is still using it, so nothing leaks as an orphaned background process.
+
+The reminder reuses the exact same cost reconstruction the dashboard itself shows — never a separate estimate — so the number in the reminder always matches the UI.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CALIPER_DISABLE_HOOKS` | unset | Set to `1` to make all three hooks fully inert — no auto-launch, no reminders, no auto-cleanup. |
+| `CALIPER_REMINDER_THRESHOLD_USD` | `0.05` | Minimum spend growth (in dollars) before the per-turn reminder shows again. |
 
 <details>
 <summary>Upgrading from <code>workflow-lens</code> (pre-0.24)? Renamed — once per machine:</summary>
@@ -59,7 +75,8 @@ Per-model rates (fable-5 $10/$50 · opus $5/$25 · sonnet $3/$15 · haiku $1/$5 
 |------|------------|
 | `packages/control-tower/` | The dashboard: local web app + JSON API reconstructing sessions, workflows, and subagents from transcripts. |
 | `packages/workflow-lens/` | Workflow-file toolkit: parse, lint, instrument, replay, estimate (keyless CLI + library). |
-| `commands/`, `skills/` | `/caliper` (+ `/control-tower` alias), the `caliper` skill, `/optimize-spend`. |
+| `commands/`, `skills/` | `/caliper` (+ `/control-tower` alias), the `caliper` skill, `/optimize-spend`, `/distill-fable`. |
+| `hooks/`, `scripts/hooks/` | Automatic SessionStart/Stop/SessionEnd hooks (see above). |
 | `scripts/` | Session-aware launcher, demo-data generator. |
 
 Run from source:
